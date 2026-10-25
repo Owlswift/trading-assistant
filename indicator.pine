@@ -1,0 +1,2001 @@
+//@version=6
+indicator("MTF FVG + FRC", overlay=true, max_boxes_count=500, max_labels_count=500)
+
+//────────────────────────────────────────────
+// SETTINGS
+//────────────────────────────────────────────
+
+showCurrent = input.bool(false, "Show Current TF FVGs")
+show1H      = input.bool(true, "Show 1H FVGs")
+show4H      = input.bool(true, "Show 4H FVGs")
+showDaily   = input.bool(true, "Show Daily FVGs")
+showFRC     = input.bool(true, "Show FRC")
+
+//────────────────────────────────────────────
+// BOS SETTINGS
+//────────────────────────────────────────────
+
+showBOS        = input.bool(true, "Show BOS", group = "Break of Structure (BOS)")
+showBOSCurrent = input.bool(true, "Show Current TF BOS", group = "Break of Structure (BOS)")
+showBOS1H      = input.bool(true, "Show 1H BOS", group = "Break of Structure (BOS)")
+showBOS4H      = input.bool(true, "Show 4H BOS", group = "Break of Structure (BOS)")
+showBOSDaily   = input.bool(true, "Show Daily BOS", group = "Break of Structure (BOS)")
+bosSwingLen    = input.int(5, "BOS Swing Length", minval = 2, group = "Break of Structure (BOS)")
+
+//────────────────────────────────────────────
+// CURRENT TF FVG STORAGE
+//────────────────────────────────────────────
+
+var box[] currentBoxes = array.new_box()
+var float[] currentTops = array.new_float()
+var float[] currentBottoms = array.new_float()
+var bool[] currentActive = array.new_bool()
+
+//────────────────────────────────────────────
+// 1H FVG STORAGE
+//────────────────────────────────────────────
+
+var box[] h1Boxes = array.new_box()
+var float[] h1Tops = array.new_float()
+var float[] h1Bottoms = array.new_float()
+var bool[] h1Bullish = array.new_bool()
+var bool[] h1Active = array.new_bool()
+var bool[] h1Tapped = array.new_bool()
+var bool[] h1FrcSeen = array.new_bool()
+var bool[] h1HasBOS = array.new_bool()
+var int[] h1CreatedTimes = array.new_int()
+
+//────────────────────────────────────────────
+// 4H FVG STORAGE
+//────────────────────────────────────────────
+
+var box[] h4Boxes = array.new_box()
+var float[] h4Tops = array.new_float()
+var float[] h4Bottoms = array.new_float()
+var bool[] h4Bullish = array.new_bool()
+var bool[] h4Active = array.new_bool()
+var bool[] h4Tapped = array.new_bool()
+var bool[] h4FrcSeen = array.new_bool()
+var bool[] h4HasBOS = array.new_bool()
+var int[] h4CreatedTimes = array.new_int()
+
+//────────────────────────────────────────────
+// DAILY FVG STORAGE
+//────────────────────────────────────────────
+
+var box[] dailyBoxes = array.new_box()
+var float[] dailyTops = array.new_float()
+var float[] dailyBottoms = array.new_float()
+var bool[] dailyBullish = array.new_bool()
+var bool[] dailyActive = array.new_bool()
+var bool[] dailyTapped = array.new_bool()
+var bool[] dailyFrcSeen = array.new_bool()
+var bool[] dailyHasBOS = array.new_bool()
+var int[] dailyCreatedTimes = array.new_int()
+
+//────────────────────────────────────────────
+// CURRENT TF FVG
+//────────────────────────────────────────────
+
+bullCurrent = low > high[2]
+bearCurrent = high < low[2]
+
+if showCurrent
+    if bullCurrent
+        b = box.new(
+             left = bar_index - 2,
+             top = low,
+             right = bar_index,
+             bottom = high[2],
+             border_color = color.gray,
+             bgcolor = color.new(color.gray, 85),
+             text = "",
+             text_size = size.normal,
+             text_halign = text.align_center,
+             text_valign = text.align_center)
+
+        box.set_border_style(b, line.style_dotted)
+
+        array.push(currentBoxes, b)
+        array.push(currentTops, low)
+        array.push(currentBottoms, high[2])
+        array.push(currentActive, true)
+
+    if bearCurrent
+        b = box.new(
+             left = bar_index - 2,
+             top = low[2],
+             right = bar_index,
+             bottom = high,
+             border_color = color.gray,
+             bgcolor = color.new(color.gray, 85),
+             text = "",
+             text_size = size.normal,
+             text_halign = text.align_center,
+             text_valign = text.align_center)
+
+        box.set_border_style(b, line.style_dotted)
+
+        array.push(currentBoxes, b)
+        array.push(currentTops, low[2])
+        array.push(currentBottoms, high)
+        array.push(currentActive, true)
+
+//────────────────────────────────────────────
+// EXTEND / STOP CURRENT TF FVG
+//────────────────────────────────────────────
+
+if array.size(currentBoxes) > 0
+    for i = 0 to array.size(currentBoxes) - 1
+        if array.get(currentActive, i)
+
+            b = array.get(currentBoxes, i)
+            top = array.get(currentTops, i)
+            bottom = array.get(currentBottoms, i)
+            creationBar = box.get_right(b)
+
+            if bar_index > creationBar
+
+                touches =
+                     high >= bottom and
+                     low <= top
+
+                if touches
+                    box.set_right(b, bar_index)
+                    array.set(currentActive, i, false)
+                else
+                    box.set_right(b, bar_index)
+
+//────────────────────────────────────────────
+// 1H DATA
+//────────────────────────────────────────────
+
+h1High = request.security(
+     syminfo.tickerid,
+     "60",
+     high,
+     lookahead = barmerge.lookahead_off)
+
+h1Low = request.security(
+     syminfo.tickerid,
+     "60",
+     low,
+     lookahead = barmerge.lookahead_off)
+
+h1Close = request.security(
+     syminfo.tickerid,
+     "60",
+     close,
+     lookahead = barmerge.lookahead_off)
+
+h1High2 = request.security(
+     syminfo.tickerid,
+     "60",
+     high[2],
+     lookahead = barmerge.lookahead_off)
+
+h1Low2 = request.security(
+     syminfo.tickerid,
+     "60",
+     low[2],
+     lookahead = barmerge.lookahead_off)
+
+h1Time = request.security(
+     syminfo.tickerid,
+     "60",
+     time,
+     lookahead = barmerge.lookahead_off)
+
+newH1 = ta.change(h1Time) != 0
+
+h1Bull = h1Low > h1High2
+h1Bear = h1High < h1Low2
+
+showH1HTF =
+     show1H and
+     timeframe.in_seconds() < timeframe.in_seconds("60")
+
+barsPer1H = math.max(
+     1,
+     int(timeframe.in_seconds("60") / timeframe.in_seconds()))
+
+//────────────────────────────────────────────
+// CREATE 1H FVG
+//────────────────────────────────────────────
+
+if showH1HTF and newH1
+
+    if h1Bull
+
+        h1Top = h1Low
+        h1Bottom = h1High2
+
+        b = box.new(
+             left = bar_index - barsPer1H,
+             top = h1Top,
+             right = bar_index,
+             bottom = h1Bottom,
+             border_color = color.gray,
+             bgcolor = color.new(color.gray, 85),
+             text = "1H",
+             text_color = color.gray,
+             text_size = size.normal,
+             text_halign = text.align_center,
+             text_valign = text.align_center)
+
+        box.set_border_style(b, line.style_dotted)
+
+        array.push(h1Boxes, b)
+        array.push(h1Tops, h1Top)
+        array.push(h1Bottoms, h1Bottom)
+        array.push(h1Bullish, true)
+        array.push(h1Active, true)
+        array.push(h1Tapped, false)
+        array.push(h1FrcSeen, false)
+        array.push(h1HasBOS, false)
+        array.push(h1CreatedTimes, h1Time)
+
+    if h1Bear
+
+        h1Top = h1Low2
+        h1Bottom = h1High
+
+        b = box.new(
+             left = bar_index - barsPer1H,
+             top = h1Top,
+             right = bar_index,
+             bottom = h1Bottom,
+             border_color = color.gray,
+             bgcolor = color.new(color.gray, 85),
+             text = "1H",
+             text_color = color.gray,
+             text_size = size.normal,
+             text_halign = text.align_center,
+             text_valign = text.align_center)
+
+        box.set_border_style(b, line.style_dotted)
+
+        array.push(h1Boxes, b)
+        array.push(h1Tops, h1Top)
+        array.push(h1Bottoms, h1Bottom)
+        array.push(h1Bullish, false)
+        array.push(h1Active, true)
+        array.push(h1Tapped, false)
+        array.push(h1FrcSeen, false)
+        array.push(h1HasBOS, false)
+        array.push(h1CreatedTimes, h1Time)
+
+//────────────────────────────────────────────
+// 4H DATA
+//────────────────────────────────────────────
+
+h4High = request.security(
+     syminfo.tickerid,
+     "240",
+     high,
+     lookahead = barmerge.lookahead_off)
+
+h4Low = request.security(
+     syminfo.tickerid,
+     "240",
+     low,
+     lookahead = barmerge.lookahead_off)
+
+h4Close = request.security(
+     syminfo.tickerid,
+     "240",
+     close,
+     lookahead = barmerge.lookahead_off)
+
+h4High2 = request.security(
+     syminfo.tickerid,
+     "240",
+     high[2],
+     lookahead = barmerge.lookahead_off)
+
+h4Low2 = request.security(
+     syminfo.tickerid,
+     "240",
+     low[2],
+     lookahead = barmerge.lookahead_off)
+
+h4Time = request.security(
+     syminfo.tickerid,
+     "240",
+     time,
+     lookahead = barmerge.lookahead_off)
+
+newH4 = ta.change(h4Time) != 0
+
+h4Bull = h4Low > h4High2
+h4Bear = h4High < h4Low2
+
+showH4HTF =
+     show4H and
+     timeframe.in_seconds() < timeframe.in_seconds("240")
+
+barsPer4H = math.max(
+     1,
+     int(timeframe.in_seconds("240") / timeframe.in_seconds()))
+
+//────────────────────────────────────────────
+// CREATE 4H FVG
+//────────────────────────────────────────────
+
+if showH4HTF and newH4
+
+    if h4Bull
+
+        h4Top = h4Low
+        h4Bottom = h4High2
+
+        b = box.new(
+             left = bar_index - barsPer4H,
+             top = h4Top,
+             right = bar_index,
+             bottom = h4Bottom,
+             border_color = color.gray,
+             bgcolor = color.new(color.gray, 85),
+             text = "4H",
+             text_color = color.gray,
+             text_size = size.normal,
+             text_halign = text.align_center,
+             text_valign = text.align_center)
+
+        box.set_border_style(b, line.style_dotted)
+
+        array.push(h4Boxes, b)
+        array.push(h4Tops, h4Top)
+        array.push(h4Bottoms, h4Bottom)
+        array.push(h4Bullish, true)
+        array.push(h4Active, true)
+        array.push(h4Tapped, false)
+        array.push(h4FrcSeen, false)
+        array.push(h4HasBOS, false)
+        array.push(h4CreatedTimes, h4Time)
+
+    if h4Bear
+
+        h4Top = h4Low2
+        h4Bottom = h4High
+
+        b = box.new(
+             left = bar_index - barsPer4H,
+             top = h4Top,
+             right = bar_index,
+             bottom = h4Bottom,
+             border_color = color.gray,
+             bgcolor = color.new(color.gray, 85),
+             text = "4H",
+             text_color = color.gray,
+             text_size = size.normal,
+             text_halign = text.align_center,
+             text_valign = text.align_center)
+
+        box.set_border_style(b, line.style_dotted)
+
+        array.push(h4Boxes, b)
+        array.push(h4Tops, h4Top)
+        array.push(h4Bottoms, h4Bottom)
+        array.push(h4Bullish, false)
+        array.push(h4Active, true)
+        array.push(h4Tapped, false)
+        array.push(h4FrcSeen, false)
+        array.push(h4HasBOS, false)
+        array.push(h4CreatedTimes, h4Time)
+
+//────────────────────────────────────────────
+// DAILY DATA
+//────────────────────────────────────────────
+
+dailyHigh = request.security(
+     syminfo.tickerid,
+     "D",
+     high,
+     lookahead = barmerge.lookahead_off)
+
+dailyLow = request.security(
+     syminfo.tickerid,
+     "D",
+     low,
+     lookahead = barmerge.lookahead_off)
+
+dailyClose = request.security(
+     syminfo.tickerid,
+     "D",
+     close,
+     lookahead = barmerge.lookahead_off)
+
+dailyHigh2 = request.security(
+     syminfo.tickerid,
+     "D",
+     high[2],
+     lookahead = barmerge.lookahead_off)
+
+dailyLow2 = request.security(
+     syminfo.tickerid,
+     "D",
+     low[2],
+     lookahead = barmerge.lookahead_off)
+
+dailyTime = request.security(
+     syminfo.tickerid,
+     "D",
+     time,
+     lookahead = barmerge.lookahead_off)
+
+newDaily = ta.change(dailyTime) != 0
+
+dailyBull = dailyLow > dailyHigh2
+dailyBear = dailyHigh < dailyLow2
+
+showDailyHTF =
+     showDaily and
+     timeframe.in_seconds() < timeframe.in_seconds("D")
+
+barsPerD = math.max(
+     1,
+     int(timeframe.in_seconds("D") / timeframe.in_seconds()))
+
+//────────────────────────────────────────────
+// CREATE DAILY FVG
+//────────────────────────────────────────────
+
+if showDailyHTF and newDaily
+
+    if dailyBull
+
+        dailyTop = dailyLow
+        dailyBottom = dailyHigh2
+
+        b = box.new(
+             left = bar_index - barsPerD,
+             top = dailyTop,
+             right = bar_index,
+             bottom = dailyBottom,
+             border_color = color.gray,
+             bgcolor = color.new(color.gray, 85),
+             text = "Daily",
+             text_color = color.gray,
+             text_size = size.normal,
+             text_halign = text.align_center,
+             text_valign = text.align_center)
+
+        box.set_border_style(b, line.style_dotted)
+
+        array.push(dailyBoxes, b)
+        array.push(dailyTops, dailyTop)
+        array.push(dailyBottoms, dailyBottom)
+        array.push(dailyBullish, true)
+        array.push(dailyActive, true)
+        array.push(dailyTapped, false)
+        array.push(dailyFrcSeen, false)
+        array.push(dailyHasBOS, false)
+        array.push(dailyCreatedTimes, dailyTime)
+
+    if dailyBear
+
+        dailyTop = dailyLow2
+        dailyBottom = dailyHigh
+
+        b = box.new(
+             left = bar_index - barsPerD,
+             top = dailyTop,
+             right = bar_index,
+             bottom = dailyBottom,
+             border_color = color.gray,
+             bgcolor = color.new(color.gray, 85),
+             text = "Daily",
+             text_color = color.gray,
+             text_size = size.normal,
+             text_halign = text.align_center,
+             text_valign = text.align_center)
+
+        box.set_border_style(b, line.style_dotted)
+
+        array.push(dailyBoxes, b)
+        array.push(dailyTops, dailyTop)
+        array.push(dailyBottoms, dailyBottom)
+        array.push(dailyBullish, false)
+        array.push(dailyActive, true)
+        array.push(dailyTapped, false)
+        array.push(dailyFrcSeen, false)
+        array.push(dailyHasBOS, false)
+        array.push(dailyCreatedTimes, dailyTime)
+
+//────────────────────────────────────────────
+// INVALIDATE 1H FVG
+//────────────────────────────────────────────
+
+if newH1 and array.size(h1Boxes) > 0
+
+    closedH1Time = h1Time
+
+    for i = 0 to array.size(h1Boxes) - 1
+
+        if array.get(h1Active, i)
+
+            createdTime = array.get(h1CreatedTimes, i)
+
+            if closedH1Time > createdTime
+
+                top = array.get(h1Tops, i)
+                bottom = array.get(h1Bottoms, i)
+                bullish = array.get(h1Bullish, i)
+
+                touches =
+                     h1High >= bottom and
+                     h1Low <= top
+
+                if touches
+                    array.set(h1Tapped, i, true)
+
+                tapped = array.get(h1Tapped, i)
+
+                consumed =
+                     tapped and
+                     (
+                         (bullish and h1Low <= bottom) or
+                         (not bullish and h1High >= top)
+                     )
+
+                if consumed
+
+                    array.set(h1Active, i, false)
+
+                    if array.get(h1FrcSeen, i)
+                        box.set_right(
+                             array.get(h1Boxes, i),
+                             bar_index)
+                    else
+                        box.delete(
+                             array.get(h1Boxes, i))
+
+//────────────────────────────────────────────
+// INVALIDATE 4H FVG
+//────────────────────────────────────────────
+
+if newH4 and array.size(h4Boxes) > 0
+
+    closedH4Time = h4Time
+
+    for i = 0 to array.size(h4Boxes) - 1
+
+        if array.get(h4Active, i)
+
+            createdTime = array.get(h4CreatedTimes, i)
+
+            if closedH4Time > createdTime
+
+                top = array.get(h4Tops, i)
+                bottom = array.get(h4Bottoms, i)
+                bullish = array.get(h4Bullish, i)
+
+                touches =
+                     h4High >= bottom and
+                     h4Low <= top
+
+                if touches
+                    array.set(h4Tapped, i, true)
+
+                tapped = array.get(h4Tapped, i)
+
+                consumed =
+                     tapped and
+                     (
+                         (bullish and h4Low <= bottom) or
+                         (not bullish and h4High >= top)
+                     )
+
+                if consumed
+
+                    array.set(h4Active, i, false)
+
+                    if array.get(h4FrcSeen, i)
+                        box.set_right(
+                             array.get(h4Boxes, i),
+                             bar_index)
+                    else
+                        box.delete(
+                             array.get(h4Boxes, i))
+
+//────────────────────────────────────────────
+// INVALIDATE DAILY FVG
+//────────────────────────────────────────────
+
+if newDaily and array.size(dailyBoxes) > 0
+
+    closedDailyTime = dailyTime
+
+    for i = 0 to array.size(dailyBoxes) - 1
+
+        if array.get(dailyActive, i)
+
+            createdTime = array.get(dailyCreatedTimes, i)
+
+            if closedDailyTime > createdTime
+
+                top = array.get(dailyTops, i)
+                bottom = array.get(dailyBottoms, i)
+                bullish = array.get(dailyBullish, i)
+
+                touches =
+                     dailyHigh >= bottom and
+                     dailyLow <= top
+
+                if touches
+                    array.set(dailyTapped, i, true)
+
+                tapped = array.get(dailyTapped, i)
+
+                consumed =
+                     tapped and
+                     (
+                         (bullish and dailyLow <= bottom) or
+                         (not bullish and dailyHigh >= top)
+                     )
+
+                if consumed
+
+                    array.set(dailyActive, i, false)
+
+                    if array.get(dailyFrcSeen, i)
+                        box.set_right(
+                             array.get(dailyBoxes, i),
+                             bar_index)
+                    else
+                        box.delete(
+                             array.get(dailyBoxes, i))
+
+//────────────────────────────────────────────
+// FRC DEFINITION
+//────────────────────────────────────────────
+
+bullFRC =
+     low <= math.min(open[1], close[1]) and
+     close > math.max(open[1], close[1])
+
+bearFRC =
+     high >= math.max(open[1], close[1]) and
+     close < math.min(open[1], close[1])
+
+//────────────────────────────────────────────
+// FRC VALIDATION
+//────────────────────────────────────────────
+
+// DAILY FVG → 1H FRC
+
+bool validBullishDailyFRC = false
+bool validBearishDailyFRC = false
+
+if showDailyHTF and array.size(dailyBoxes) > 0
+
+    for i = 0 to array.size(dailyBoxes) - 1
+
+        if array.get(dailyActive, i)
+
+            dailyTop = array.get(dailyTops, i)
+            dailyBottom = array.get(dailyBottoms, i)
+            dailyIsBullish = array.get(dailyBullish, i)
+            dailyCausedBOS = array.get(dailyHasBOS, i)
+
+            touchesDaily =
+                 high >= dailyBottom and
+                 low <= dailyTop
+
+            if touchesDaily
+                array.set(dailyTapped, i, true)
+
+            if dailyIsBullish and touchesDaily and bullFRC and dailyCausedBOS
+                validBullishDailyFRC := true
+
+            if not dailyIsBullish and touchesDaily and bearFRC and dailyCausedBOS
+                validBearishDailyFRC := true
+
+// 1H FVG → 5M FRC
+
+bool validBullish1HFRC = false
+bool validBearish1HFRC = false
+
+if showH1HTF and array.size(h1Boxes) > 0
+
+    for i = 0 to array.size(h1Boxes) - 1
+
+        if array.get(h1Active, i)
+
+            h1Top = array.get(h1Tops, i)
+            h1Bottom = array.get(h1Bottoms, i)
+            h1IsBullish = array.get(h1Bullish, i)
+            h1CausedBOS = array.get(h1HasBOS, i)
+
+            touches1H =
+                 high >= h1Bottom and
+                 low <= h1Top
+
+            if touches1H
+                array.set(h1Tapped, i, true)
+
+            if h1IsBullish and touches1H and bullFRC and h1CausedBOS
+                validBullish1HFRC := true
+
+            if not h1IsBullish and touches1H and bearFRC and h1CausedBOS
+                validBearish1HFRC := true
+
+// 4H FVG → 1H FRC
+
+bool validBullish4HFRC = false
+bool validBearish4HFRC = false
+
+if showH4HTF and array.size(h4Boxes) > 0
+
+    for i = 0 to array.size(h4Boxes) - 1
+
+        if array.get(h4Active, i)
+
+            h4Top = array.get(h4Tops, i)
+            h4Bottom = array.get(h4Bottoms, i)
+            h4IsBullish = array.get(h4Bullish, i)
+            h4CausedBOS = array.get(h4HasBOS, i)
+
+            touches4H =
+                 high >= h4Bottom and
+                 low <= h4Top
+
+            if touches4H
+                array.set(h4Tapped, i, true)
+
+            if h4IsBullish and touches4H and bullFRC and h4CausedBOS
+                validBullish4HFRC := true
+
+            if not h4IsBullish and touches4H and bearFRC and h4CausedBOS
+                validBearish4HFRC := true
+
+//────────────────────────────────────────────
+// FINAL FRC VALIDATION
+//────────────────────────────────────────────
+
+is1H =
+     timeframe.in_seconds() == timeframe.in_seconds("60")
+
+is5M =
+     timeframe.in_seconds() == timeframe.in_seconds("5")
+
+validBullFRC =
+     showFRC and
+     (
+         (is1H and
+             (validBullishDailyFRC or validBullish4HFRC)) or
+         (is5M and validBullish1HFRC)
+     )
+
+validBearFRC =
+     showFRC and
+     (
+         (is1H and
+             (validBearishDailyFRC or validBearish4HFRC)) or
+         (is5M and validBearish1HFRC)
+     )
+
+//────────────────────────────────────────────
+// SUPPRESS SAME-DIRECTION CONTINUATION FRCs
+//────────────────────────────────────────────
+
+var bool bullFRCArmed = true
+var bool bearFRCArmed = true
+
+if close > open
+    bearFRCArmed := true
+
+if close < open
+    bullFRCArmed := true
+
+showBullFRC = validBullFRC and bullFRCArmed
+showBearFRC = validBearFRC and bearFRCArmed
+
+if showBullFRC
+    bullFRCArmed := false
+
+if showBearFRC
+    bearFRCArmed := false
+
+//────────────────────────────────────────────
+// TAG HTF FVGs THAT PRODUCED A LABELLED FRC
+//────────────────────────────────────────────
+
+if showBullFRC or showBearFRC
+
+    wantBull = showBullFRC
+
+    if array.size(h1Boxes) > 0
+
+        for i = 0 to array.size(h1Boxes) - 1
+
+            if array.get(h1Active, i) and
+                 array.get(h1Bullish, i) == wantBull and
+                 high >= array.get(h1Bottoms, i) and
+                 low <= array.get(h1Tops, i)
+
+                array.set(h1FrcSeen, i, true)
+
+    if array.size(h4Boxes) > 0
+
+        for i = 0 to array.size(h4Boxes) - 1
+
+            if array.get(h4Active, i) and
+                 array.get(h4Bullish, i) == wantBull and
+                 high >= array.get(h4Bottoms, i) and
+                 low <= array.get(h4Tops, i)
+
+                array.set(h4FrcSeen, i, true)
+
+    if array.size(dailyBoxes) > 0
+
+        for i = 0 to array.size(dailyBoxes) - 1
+
+            if array.get(dailyActive, i) and
+                 array.get(dailyBullish, i) == wantBull and
+                 high >= array.get(dailyBottoms, i) and
+                 low <= array.get(dailyTops, i)
+
+                array.set(dailyFrcSeen, i, true)
+
+//────────────────────────────────────────────
+// FRC CIRCLES
+//────────────────────────────────────────────
+
+plotshape(
+     showBullFRC ? low : na,
+     title = "Bullish FRC",
+     style = shape.circle,
+     location = location.absolute,
+     size = size.small,
+     color = color.gray)
+
+plotshape(
+     showBearFRC ? high : na,
+     title = "Bearish FRC",
+     style = shape.circle,
+     location = location.absolute,
+     size = size.small,
+     color = color.gray)
+
+//────────────────────────────────────────────
+// FRC LABELS
+//────────────────────────────────────────────
+
+if showBullFRC
+
+    label.new(
+         bar_index,
+         low,
+         "FRC",
+         style = label.style_label_up,
+         size = size.normal,
+         textcolor = color.gray,
+         color = color.new(color.white, 100))
+
+if showBearFRC
+
+    label.new(
+         bar_index,
+         high,
+         "FRC",
+         style = label.style_label_down,
+         size = size.normal,
+         textcolor = color.gray,
+         color = color.new(color.white, 100))
+
+//────────────────────────────────────────────
+// ORDER BLOCKS INSIDE HTF FVGs
+//────────────────────────────────────────────
+
+showOB = input.bool(true, "Show OB Inside FVGs")
+
+var box[] obBoxes = array.new_box()
+var float[] obTops = array.new_float()
+var float[] obBottoms = array.new_float()
+var bool[] obBullish = array.new_bool()
+var bool[] obActive = array.new_bool()
+var int[] obParentType = array.new_int()
+var int[] obParentIndex = array.new_int()
+var int[] obCreatedTimes = array.new_int()
+var bool[] obTapped = array.new_bool()
+var int[] obCreatedBars = array.new_int()
+
+is5MChart =
+     timeframe.in_seconds() == timeframe.in_seconds("5")
+
+//────────────────────────────────────────────
+// 1H OB DATA
+//────────────────────────────────────────────
+
+h1OpenOB = request.security(
+     syminfo.tickerid,
+     "60",
+     open,
+     lookahead = barmerge.lookahead_off)
+
+h1HighOB = request.security(
+     syminfo.tickerid,
+     "60",
+     high,
+     lookahead = barmerge.lookahead_off)
+
+h1LowOB = request.security(
+     syminfo.tickerid,
+     "60",
+     low,
+     lookahead = barmerge.lookahead_off)
+
+h1CloseOB = request.security(
+     syminfo.tickerid,
+     "60",
+     close,
+     lookahead = barmerge.lookahead_off)
+
+h1TimeOB = request.security(
+     syminfo.tickerid,
+     "60",
+     time,
+     lookahead = barmerge.lookahead_off)
+
+newH1OB =
+     ta.change(h1TimeOB) != 0
+
+bullOB1H =
+     newH1OB and
+     h1CloseOB[2] < h1OpenOB[2] and
+     h1CloseOB[1] > h1HighOB[2]
+
+bearOB1H =
+     newH1OB and
+     h1CloseOB[2] > h1OpenOB[2] and
+     h1CloseOB[1] < h1LowOB[2]
+
+//────────────────────────────────────────────
+// OB CREATION HELPERS
+//────────────────────────────────────────────
+
+f_createOB(
+     _top,
+     _bottom,
+     _bullish,
+     _parentType,
+     _parentIndex,
+     _createdTime,
+     _label) =>
+
+    ob = box.new(
+         left = bar_index,
+         top = _top,
+         right = bar_index,
+         bottom = _bottom,
+         border_color = color.gray,
+         bgcolor = color.new(color.gray, 82),
+         text = _label,
+         text_color = color.gray,
+         text_size = size.small,
+         text_halign = text.align_center,
+         text_valign = text.align_center)
+
+    box.set_border_style(ob, line.style_solid)
+
+    array.push(obBoxes, ob)
+    array.push(obTops, _top)
+    array.push(obBottoms, _bottom)
+    array.push(obBullish, _bullish)
+    array.push(obActive, true)
+    array.push(obParentType, _parentType)
+    array.push(obParentIndex, _parentIndex)
+    array.push(obCreatedTimes, _createdTime)
+    array.push(obTapped, false)
+    array.push(obCreatedBars, bar_index)
+
+
+f_createOBAt(
+     _leftBar,
+     _top,
+     _bottom,
+     _bullish,
+     _parentType,
+     _parentIndex,
+     _createdTime,
+     _label) =>
+
+    ob = box.new(
+         left = _leftBar,
+         top = _top,
+         right = bar_index,
+         bottom = _bottom,
+         border_color = color.gray,
+         bgcolor = color.new(color.gray, 82),
+         text = _label,
+         text_color = color.gray,
+         text_size = size.small,
+         text_halign = text.align_center,
+         text_valign = text.align_center)
+
+    box.set_border_style(ob, line.style_solid)
+
+    array.push(obBoxes, ob)
+    array.push(obTops, _top)
+    array.push(obBottoms, _bottom)
+    array.push(obBullish, _bullish)
+    array.push(obActive, true)
+    array.push(obParentType, _parentType)
+    array.push(obParentIndex, _parentIndex)
+    array.push(obCreatedTimes, _createdTime)
+    array.push(obTapped, false)
+    array.push(obCreatedBars, bar_index)
+
+//────────────────────────────────────────────
+// 1H OBs INSIDE DAILY FVGs
+//────────────────────────────────────────────
+
+if showOB and
+     (bullOB1H or bearOB1H) and
+     array.size(dailyBoxes) > 0
+
+    obTop1H = h1HighOB[2]
+    obBottom1H = h1LowOB[2]
+    obBull1H = bullOB1H
+
+    for i = 0 to array.size(dailyBoxes) - 1
+
+        if array.get(dailyActive, i)
+
+            fvgTop = array.get(dailyTops, i)
+            fvgBottom = array.get(dailyBottoms, i)
+            fvgBull = array.get(dailyBullish, i)
+            fvgCreatedTime = array.get(dailyCreatedTimes, i)
+
+            // OVERLAPS the FVG's range, not fully contained.
+
+            obOverlapsFVG =
+                 obTop1H >= fvgBottom and
+                 obBottom1H <= fvgTop
+
+            correctDirection =
+                 fvgBull == obBull1H
+
+            obTimeValid =
+                 h1TimeOB[2] >= fvgCreatedTime
+
+            if obOverlapsFVG and
+                 correctDirection and
+                 obTimeValid
+
+                f_createOB(
+                     obTop1H,
+                     obBottom1H,
+                     obBull1H,
+                     3,
+                     i,
+                     h1TimeOB[2],
+                     obBull1H ? "1H Bull OB" : "1H Bear OB")
+
+//────────────────────────────────────────────
+// 1H OBs INSIDE 4H FVGs
+//────────────────────────────────────────────
+
+if showOB and
+     (bullOB1H or bearOB1H) and
+     array.size(h4Boxes) > 0
+
+    obTop1H = h1HighOB[2]
+    obBottom1H = h1LowOB[2]
+    obBull1H = bullOB1H
+
+    for i = 0 to array.size(h4Boxes) - 1
+
+        if array.get(h4Active, i)
+
+            fvgTop = array.get(h4Tops, i)
+            fvgBottom = array.get(h4Bottoms, i)
+            fvgBull = array.get(h4Bullish, i)
+            fvgCreatedTime = array.get(h4CreatedTimes, i)
+
+            // OVERLAPS the FVG's range, not fully contained.
+
+            obOverlapsFVG =
+                 obTop1H >= fvgBottom and
+                 obBottom1H <= fvgTop
+
+            correctDirection =
+                 fvgBull == obBull1H
+
+            obTimeValid =
+                 h1TimeOB[2] >= fvgCreatedTime
+
+            if obOverlapsFVG and
+                 correctDirection and
+                 obTimeValid
+
+                f_createOB(
+                     obTop1H,
+                     obBottom1H,
+                     obBull1H,
+                     2,
+                     i,
+                     h1TimeOB[2],
+                     obBull1H ? "1H Bull OB" : "1H Bear OB")
+
+//────────────────────────────────────────────
+// 5M OBs INSIDE 1H FVGs
+//
+// A 5M OB is only ever created from the FVG's
+// OWN formation window (below, on newH1) — never
+// from a later candle just because it happens to
+// trade inside an already-active FVG. Detecting
+// continuously off bullOB5M/bearOB5M here used to
+// catch retest-time reactions and mislabel them
+// as the formation OB, so that path was removed.
+//────────────────────────────────────────────
+
+//────────────────────────────────────────────
+// RECOVER 5M OBs FORMED WHILE 1H FVG WAS FORMING
+//────────────────────────────────────────────
+
+// A 5M OB can form BEFORE the 1H FVG is recognized.
+//
+// When the new 1H FVG appears, scan the preceding
+// 36 x 5M candles and recover qualifying OBs.
+//
+// The recovered OB must:
+// 1. Be the last candle OPPOSING the FVG's direction
+//    before something ELSE (not necessarily the very
+//    next candle) closes beyond its high/low.
+// 2. Overlap the 1H FVG's price range (not
+//    necessarily be fully contained by it).
+// 3. Match the 1H FVG direction.
+
+if showOB and
+     is5MChart and
+     newH1 and
+     array.size(h1Boxes) > 0
+
+    h1Index = array.size(h1Boxes) - 1
+
+    fvgTop = array.get(h1Tops, h1Index)
+    fvgBottom = array.get(h1Bottoms, h1Index)
+    fvgBull = array.get(h1Bullish, h1Index)
+
+    float candTop = na
+    float candBottom = na
+    int candOffset = na
+    bool candUsed = true
+
+    // 36 x 5M candles = 3 hours, oldest to newest.
+    for n = 36 to 1
+
+        o_ = open[n]
+        c_ = close[n]
+        h_ = high[n]
+        l_ = low[n]
+
+        // Has price finally broken back OUT of the
+        // tracked opposing candle, in the FVG's direction?
+        // (Could be many candles later, not just the next one.)
+
+        breaks =
+             fvgBull ?
+                 (not na(candTop) and not candUsed and c_ > candTop) :
+                 (not na(candBottom) and not candUsed and c_ < candBottom)
+
+        if breaks
+
+            obTop = candTop
+            obBottom = candBottom
+            obBarIdx = bar_index - candOffset
+
+            obOverlapsFVG =
+                 obTop >= fvgBottom and
+                 obBottom <= fvgTop
+
+            if obOverlapsFVG
+
+                f_createOBAt(
+                     obBarIdx,
+                     obTop,
+                     obBottom,
+                     fvgBull,
+                     1,
+                     h1Index,
+                     time[candOffset],
+                     fvgBull ? "5M Bull OB" : "5M Bear OB")
+
+            candUsed := true
+
+        // Track the latest candle OPPOSING the FVG's
+        // direction as the current OB candidate.
+
+        isTrackCandle =
+             fvgBull ? c_ < o_ : c_ > o_
+
+        if isTrackCandle
+            candTop := h_
+            candBottom := l_
+            candOffset := n
+            candUsed := false
+
+//────────────────────────────────────────────
+// EXTEND / REMOVE OBs WITH THEIR PARENT FVG
+//────────────────────────────────────────────
+
+if array.size(obBoxes) > 0
+
+    for i = 0 to array.size(obBoxes) - 1
+
+        if array.get(obActive, i)
+
+            parentType =
+                 array.get(obParentType, i)
+
+            parentIndex =
+                 array.get(obParentIndex, i)
+
+            parentStillActive = false
+
+            if parentType == 1 and
+                 parentIndex < array.size(h1Active)
+
+                parentStillActive :=
+                     array.get(h1Active, parentIndex)
+
+            if parentType == 2 and
+                 parentIndex < array.size(h4Active)
+
+                parentStillActive :=
+                     array.get(h4Active, parentIndex)
+
+            if parentType == 3 and
+                 parentIndex < array.size(dailyActive)
+
+                parentStillActive :=
+                     array.get(dailyActive, parentIndex)
+
+            if parentStillActive
+
+                // Freeze the OB at the bar that first
+                // trades back into it, instead of
+                // extending for the parent FVG's lifetime.
+                if not array.get(obTapped, i)
+
+                    box.set_right(
+                         array.get(obBoxes, i),
+                         bar_index)
+
+                    if barstate.isconfirmed and
+                         bar_index > array.get(obCreatedBars, i) and
+                         high >= array.get(obBottoms, i) and
+                         low <= array.get(obTops, i)
+
+                        array.set(obTapped, i, true)
+
+            else
+
+                box.delete(
+                     array.get(obBoxes, i))
+
+                array.set(
+                     obActive,
+                     i,
+                     false)
+
+//────────────────────────────────────────────
+// EXTEND 1H FVG
+//────────────────────────────────────────────
+
+if array.size(h1Boxes) > 0
+
+    for i = 0 to array.size(h1Boxes) - 1
+
+        if array.get(h1Active, i)
+
+            b = array.get(h1Boxes, i)
+
+            box.set_right(
+                 b,
+                 bar_index)
+
+//────────────────────────────────────────────
+// EXTEND 4H FVG
+//────────────────────────────────────────────
+
+if array.size(h4Boxes) > 0
+
+    for i = 0 to array.size(h4Boxes) - 1
+
+        if array.get(h4Active, i)
+
+            b = array.get(h4Boxes, i)
+
+            box.set_right(
+                 b,
+                 bar_index)
+
+//────────────────────────────────────────────
+// EXTEND DAILY FVG
+//────────────────────────────────────────────
+
+if array.size(dailyBoxes) > 0
+
+    for i = 0 to array.size(dailyBoxes) - 1
+
+        if array.get(dailyActive, i)
+
+            b = array.get(dailyBoxes, i)
+
+            box.set_right(
+                 b,
+                 bar_index)
+
+//────────────────────────────────────────────
+// ADR
+//────────────────────────────────────────────
+
+showADR   = input.bool(true, "Show ADR")
+adrLength = input.int(14, "ADR Length", minval=1)
+
+adrTFAllowed =
+     timeframe.isintraday and
+     timeframe.in_seconds() <= timeframe.in_seconds("240")
+
+adr = request.security(
+     syminfo.tickerid,
+     "D",
+     ta.sma(high, adrLength) - ta.sma(low, adrLength),
+     lookahead = barmerge.lookahead_on)
+
+dayOpen = request.security(
+     syminfo.tickerid,
+     "D",
+     open,
+     lookahead = barmerge.lookahead_on)
+
+adrHigh = dayOpen + adr / 2
+adrLow = dayOpen - adr / 2
+
+newDay =
+     ta.change(time("D")) != 0
+
+var line adrHighLine = na
+var line adrLowLine = na
+var label adrHighLabel = na
+var label adrLowLabel = na
+
+if adrTFAllowed and showADR
+
+    if newDay or na(adrHighLine)
+
+        adrHighLine := line.new(
+             bar_index,
+             adrHigh,
+             bar_index,
+             adrHigh,
+             color = color.gray,
+             style = line.style_solid,
+             width = 1)
+
+        adrLowLine := line.new(
+             bar_index,
+             adrLow,
+             bar_index,
+             adrLow,
+             color = color.gray,
+             style = line.style_solid,
+             width = 1)
+
+        adrHighLabel := label.new(
+             bar_index,
+             adrHigh,
+             "ADR High",
+             style = label.style_label_left,
+             color = color.gray,
+             textcolor = color.white,
+             size = size.small)
+
+        adrLowLabel := label.new(
+             bar_index,
+             adrLow,
+             "ADR Low",
+             style = label.style_label_left,
+             color = color.gray,
+             textcolor = color.white,
+             size = size.small)
+
+    line.set_x2(
+         adrHighLine,
+         bar_index)
+
+    line.set_y2(
+         adrHighLine,
+         adrHigh)
+
+    line.set_x2(
+         adrLowLine,
+         bar_index)
+
+    line.set_y2(
+         adrLowLine,
+         adrLow)
+
+    label.set_x(
+         adrHighLabel,
+         bar_index)
+
+    label.set_y(
+         adrHighLabel,
+         adrHigh)
+
+    label.set_x(
+         adrLowLabel,
+         bar_index)
+
+    label.set_y(
+         adrLowLabel,
+         adrLow)
+
+if not adrTFAllowed or not showADR
+
+    line.delete(adrHighLine)
+    line.delete(adrLowLine)
+    label.delete(adrHighLabel)
+    label.delete(adrLowLabel)
+
+    adrHighLine := na
+    adrLowLine := na
+    adrHighLabel := na
+    adrLowLabel := na
+
+//────────────────────────────────────────────
+// PREVIOUS PERIOD CLOSE LABELS
+//────────────────────────────────────────────
+
+showCloses =
+     input.bool(true, "Show Previous Period Closes")
+
+showLastDay =
+     input.bool(true, "Last Day Close")
+
+showLastWeek =
+     input.bool(true, "Last Week Close")
+
+showLastMonth =
+     input.bool(true, "Last Month Close")
+
+showLast3M =
+     input.bool(true, "Last 3 Months Close")
+
+showLast6M =
+     input.bool(true, "Last 6 Months Close")
+
+showLastYear =
+     input.bool(true, "Last Year Close")
+
+lastDayClose =
+     request.security(
+         syminfo.tickerid,
+         "D",
+         close[1],
+         lookahead = barmerge.lookahead_on)
+
+lastWeekClose =
+     request.security(
+         syminfo.tickerid,
+         "W",
+         close[1],
+         lookahead = barmerge.lookahead_on)
+
+lastMonthClose =
+     request.security(
+         syminfo.tickerid,
+         "M",
+         close[1],
+         lookahead = barmerge.lookahead_on)
+
+last3MClose =
+     request.security(
+         syminfo.tickerid,
+         "3M",
+         close[1],
+         lookahead = barmerge.lookahead_on)
+
+last6MClose =
+     request.security(
+         syminfo.tickerid,
+         "6M",
+         close[1],
+         lookahead = barmerge.lookahead_on)
+
+lastYearClose =
+     request.security(
+         syminfo.tickerid,
+         "12M",
+         close[1],
+         lookahead = barmerge.lookahead_on)
+
+var line dayLine = na
+var line weekLine = na
+var line monthLine = na
+var line m3Line = na
+var line m6Line = na
+var line yearLine = na
+
+var label dayLabel = na
+var label weekLabel = na
+var label monthLabel = na
+var label m3Label = na
+var label m6Label = na
+var label yearLabel = na
+
+if barstate.islast
+
+    line.delete(dayLine)
+    line.delete(weekLine)
+    line.delete(monthLine)
+    line.delete(m3Line)
+    line.delete(m6Line)
+    line.delete(yearLine)
+
+    label.delete(dayLabel)
+    label.delete(weekLabel)
+    label.delete(monthLabel)
+    label.delete(m3Label)
+    label.delete(m6Label)
+    label.delete(yearLabel)
+
+    int x1 = bar_index
+    int x2 = bar_index + 10
+
+    if showCloses and showLastDay
+
+        dayLine := line.new(
+             x1,
+             lastDayClose,
+             x2,
+             lastDayClose,
+             color = color.gray,
+             style = line.style_solid,
+             width = 1)
+
+        dayLabel := label.new(
+             x2,
+             lastDayClose,
+             "Last Day Close: " +
+             str.tostring(lastDayClose, format.mintick),
+             style = label.style_label_left,
+             textcolor = color.white,
+             color = color.gray)
+
+    if showCloses and showLastWeek
+
+        weekLine := line.new(
+             x1,
+             lastWeekClose,
+             x2,
+             lastWeekClose,
+             color = color.gray,
+             style = line.style_solid,
+             width = 1)
+
+        weekLabel := label.new(
+             x2,
+             lastWeekClose,
+             "Last Week Close: " +
+             str.tostring(lastWeekClose, format.mintick),
+             style = label.style_label_left,
+             textcolor = color.white,
+             color = color.gray)
+
+    if showCloses and showLastMonth
+
+        monthLine := line.new(
+             x1,
+             lastMonthClose,
+             x2,
+             lastMonthClose,
+             color = color.gray,
+             style = line.style_solid,
+             width = 1)
+
+        monthLabel := label.new(
+             x2,
+             lastMonthClose,
+             "Last Month Close: " +
+             str.tostring(lastMonthClose, format.mintick),
+             style = label.style_label_left,
+             textcolor = color.white,
+             color = color.gray)
+
+    if showCloses and showLast3M
+
+        m3Line := line.new(
+             x1,
+             last3MClose,
+             x2,
+             last3MClose,
+             color = color.gray,
+             style = line.style_solid,
+             width = 1)
+
+        m3Label := label.new(
+             x2,
+             last3MClose,
+             "Last 3M Close: " +
+             str.tostring(last3MClose, format.mintick),
+             style = label.style_label_left,
+             textcolor = color.white,
+             color = color.gray)
+
+    if showCloses and showLast6M
+
+        m6Line := line.new(
+             x1,
+             last6MClose,
+             x2,
+             last6MClose,
+             color = color.gray,
+             style = line.style_solid,
+             width = 1)
+
+        m6Label := label.new(
+             x2,
+             last6MClose,
+             "Last 6M Close: " +
+             str.tostring(last6MClose, format.mintick),
+             style = label.style_label_left,
+             textcolor = color.white,
+             color = color.gray)
+
+    if showCloses and showLastYear
+
+        yearLine := line.new(
+             x1,
+             lastYearClose,
+             x2,
+             lastYearClose,
+             color = color.gray,
+             style = line.style_solid,
+             width = 1)
+
+        yearLabel := label.new(
+             x2,
+             lastYearClose,
+             "Last Year Close: " +
+             str.tostring(lastYearClose, format.mintick),
+             style = label.style_label_left,
+             textcolor = color.white,
+             color = color.gray)
+
+//────────────────────────────────────────────
+// BOS — CURRENT (CHART) TF
+//────────────────────────────────────────────
+
+phCurrent = ta.pivothigh(high, bosSwingLen, bosSwingLen)
+plCurrent = ta.pivotlow(low, bosSwingLen, bosSwingLen)
+
+var float lastPivotHighCur = na
+var float lastPivotLowCur = na
+var bool bosUpDoneCur = false
+var bool bosDownDoneCur = false
+
+if not na(phCurrent)
+    lastPivotHighCur := phCurrent
+    bosUpDoneCur := false
+
+if not na(plCurrent)
+    lastPivotLowCur := plCurrent
+    bosDownDoneCur := false
+
+bullishBOSCurrent =
+     showBOS and
+     showBOSCurrent and
+     not na(lastPivotHighCur) and
+     not bosUpDoneCur and
+     ta.crossover(close, lastPivotHighCur)
+
+bearishBOSCurrent =
+     showBOS and
+     showBOSCurrent and
+     not na(lastPivotLowCur) and
+     not bosDownDoneCur and
+     ta.crossunder(close, lastPivotLowCur)
+
+if bullishBOSCurrent
+    bosUpDoneCur := true
+
+if bearishBOSCurrent
+    bosDownDoneCur := true
+
+//────────────────────────────────────────────
+// BOS — 1H
+//────────────────────────────────────────────
+
+ph1H = request.security(
+     syminfo.tickerid,
+     "60",
+     ta.pivothigh(high, bosSwingLen, bosSwingLen),
+     lookahead = barmerge.lookahead_off)
+
+pl1H = request.security(
+     syminfo.tickerid,
+     "60",
+     ta.pivotlow(low, bosSwingLen, bosSwingLen),
+     lookahead = barmerge.lookahead_off)
+
+var float lastPivotHigh1H = na
+var float lastPivotLow1H = na
+var bool bosUpDone1H = false
+var bool bosDownDone1H = false
+
+if not na(ph1H)
+    lastPivotHigh1H := ph1H
+    bosUpDone1H := false
+
+if not na(pl1H)
+    lastPivotLow1H := pl1H
+    bosDownDone1H := false
+
+bullishBOS1H =
+     showBOS and
+     showBOS1H and
+     showH1HTF and
+     newH1 and
+     not na(lastPivotHigh1H) and
+     not bosUpDone1H and
+     h1Close > lastPivotHigh1H
+
+bearishBOS1H =
+     showBOS and
+     showBOS1H and
+     showH1HTF and
+     newH1 and
+     not na(lastPivotLow1H) and
+     not bosDownDone1H and
+     h1Close < lastPivotLow1H
+
+if bullishBOS1H
+    bosUpDone1H := true
+
+if bearishBOS1H
+    bosDownDone1H := true
+
+if (bullishBOS1H or bearishBOS1H) and array.size(h1Boxes) > 0
+
+    wantBull1HBOS = bullishBOS1H
+
+    for i = 0 to array.size(h1Boxes) - 1
+
+        if array.get(h1Active, i) and
+             array.get(h1Bullish, i) == wantBull1HBOS
+
+            array.set(h1HasBOS, i, true)
+
+//────────────────────────────────────────────
+// BOS — 4H
+//────────────────────────────────────────────
+
+ph4H = request.security(
+     syminfo.tickerid,
+     "240",
+     ta.pivothigh(high, bosSwingLen, bosSwingLen),
+     lookahead = barmerge.lookahead_off)
+
+pl4H = request.security(
+     syminfo.tickerid,
+     "240",
+     ta.pivotlow(low, bosSwingLen, bosSwingLen),
+     lookahead = barmerge.lookahead_off)
+
+var float lastPivotHigh4H = na
+var float lastPivotLow4H = na
+var bool bosUpDone4H = false
+var bool bosDownDone4H = false
+
+if not na(ph4H)
+    lastPivotHigh4H := ph4H
+    bosUpDone4H := false
+
+if not na(pl4H)
+    lastPivotLow4H := pl4H
+    bosDownDone4H := false
+
+bullishBOS4H =
+     showBOS and
+     showBOS4H and
+     showH4HTF and
+     newH4 and
+     not na(lastPivotHigh4H) and
+     not bosUpDone4H and
+     h4Close > lastPivotHigh4H
+
+bearishBOS4H =
+     showBOS and
+     showBOS4H and
+     showH4HTF and
+     newH4 and
+     not na(lastPivotLow4H) and
+     not bosDownDone4H and
+     h4Close < lastPivotLow4H
+
+if bullishBOS4H
+    bosUpDone4H := true
+
+if bearishBOS4H
+    bosDownDone4H := true
+
+if (bullishBOS4H or bearishBOS4H) and array.size(h4Boxes) > 0
+
+    wantBull4HBOS = bullishBOS4H
+
+    for i = 0 to array.size(h4Boxes) - 1
+
+        if array.get(h4Active, i) and
+             array.get(h4Bullish, i) == wantBull4HBOS
+
+            array.set(h4HasBOS, i, true)
+
+//────────────────────────────────────────────
+// BOS — DAILY
+//────────────────────────────────────────────
+
+phDaily = request.security(
+     syminfo.tickerid,
+     "D",
+     ta.pivothigh(high, bosSwingLen, bosSwingLen),
+     lookahead = barmerge.lookahead_off)
+
+plDaily = request.security(
+     syminfo.tickerid,
+     "D",
+     ta.pivotlow(low, bosSwingLen, bosSwingLen),
+     lookahead = barmerge.lookahead_off)
+
+var float lastPivotHighDaily = na
+var float lastPivotLowDaily = na
+var bool bosUpDoneDaily = false
+var bool bosDownDoneDaily = false
+
+if not na(phDaily)
+    lastPivotHighDaily := phDaily
+    bosUpDoneDaily := false
+
+if not na(plDaily)
+    lastPivotLowDaily := plDaily
+    bosDownDoneDaily := false
+
+bullishBOSDaily =
+     showBOS and
+     showBOSDaily and
+     showDailyHTF and
+     newDaily and
+     not na(lastPivotHighDaily) and
+     not bosUpDoneDaily and
+     dailyClose > lastPivotHighDaily
+
+bearishBOSDaily =
+     showBOS and
+     showBOSDaily and
+     showDailyHTF and
+     newDaily and
+     not na(lastPivotLowDaily) and
+     not bosDownDoneDaily and
+     dailyClose < lastPivotLowDaily
+
+if bullishBOSDaily
+    bosUpDoneDaily := true
+
+if bearishBOSDaily
+    bosDownDoneDaily := true
+
+if (bullishBOSDaily or bearishBOSDaily) and array.size(dailyBoxes) > 0
+
+    wantBullDailyBOS = bullishBOSDaily
+
+    for i = 0 to array.size(dailyBoxes) - 1
+
+        if array.get(dailyActive, i) and
+             array.get(dailyBullish, i) == wantBullDailyBOS
+
+            array.set(dailyHasBOS, i, true)
+
+//────────────────────────────────────────────
+// BOS PLOTS
+//────────────────────────────────────────────
+
+plotshape(
+     bullishBOSCurrent ? low : na,
+     title = "Bullish BOS (Current)",
+     style = shape.triangleup,
+     location = location.belowbar,
+     size = size.tiny,
+     color = color.gray)
+
+plotshape(
+     bearishBOSCurrent ? high : na,
+     title = "Bearish BOS (Current)",
+     style = shape.triangledown,
+     location = location.abovebar,
+     size = size.tiny,
+     color = color.gray)
+
+if bullishBOSCurrent
+    label.new(
+         bar_index,
+         low,
+         "BOS",
+         style = label.style_label_up,
+         size = size.small,
+         textcolor = color.gray,
+         color = color.new(color.white, 100))
+
+if bearishBOSCurrent
+    label.new(
+         bar_index,
+         high,
+         "BOS",
+         style = label.style_label_down,
+         size = size.small,
+         textcolor = color.gray,
+         color = color.new(color.white, 100))
+
+if bullishBOS1H
+    label.new(
+         bar_index,
+         low,
+         "BOS 1H",
+         style = label.style_label_up,
+         size = size.small,
+         textcolor = color.gray,
+         color = color.new(color.white, 100))
+
+if bearishBOS1H
+    label.new(
+         bar_index,
+         high,
+         "BOS 1H",
+         style = label.style_label_down,
+         size = size.small,
+         textcolor = color.gray,
+         color = color.new(color.white, 100))
+
+if bullishBOS4H
+    label.new(
+         bar_index,
+         low,
+         "BOS 4H",
+         style = label.style_label_up,
+         size = size.small,
+         textcolor = color.gray,
+         color = color.new(color.white, 100))
+
+if bearishBOS4H
+    label.new(
+         bar_index,
+         high,
+         "BOS 4H",
+         style = label.style_label_down,
+         size = size.small,
+         textcolor = color.gray,
+         color = color.new(color.white, 100))
+
+if bullishBOSDaily
+    label.new(
+         bar_index,
+         low,
+         "BOS Daily",
+         style = label.style_label_up,
+         size = size.small,
+         textcolor = color.gray,
+         color = color.new(color.white, 100))
+
+if bearishBOSDaily
+    label.new(
+         bar_index,
+         high,
+         "BOS Daily",
+         style = label.style_label_down,
+         size = size.small,
+         textcolor = color.gray,
+         color = color.new(color.white, 100))

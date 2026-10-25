@@ -1,0 +1,8 @@
+fastapi
+uvicorn[standard]
+yfinance
+pandas
+anthropic
+python-dotenv
+httpx
+websockets

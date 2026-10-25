@@ -1,0 +1,1374 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gold Trading Assistant</title>
+<script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+<style>
+  :root {
+    --bg: #0e1116; --panel: #151a22; --border: #262d38; --text: #e6e9ef; --muted: #8b95a5;
+    --accent: #d4a73a; --up: #26a69a; --down: #ef5350; --user: #1f2a3a;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body { background: var(--bg); color: var(--text); font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; display: flex; }
+  #left { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  #right { width: 400px; max-width: 45vw; border-left: 1px solid var(--border); background: var(--panel); display: flex; flex-direction: column; }
+  header { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; padding: 8px 16px; border-bottom: 1px solid var(--border); }
+  header h1 { font-size: 15px; margin: 0; color: var(--accent); font-weight: 600; }
+  .lv { display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--muted); }
+  .lv label { display: flex; align-items: center; gap: 3px; cursor: pointer; color: var(--c, var(--muted)); font-weight: 600; }
+  .lv label.atr { color: var(--muted); font-weight: 400; }
+  .lv input[type=number] { width: 52px; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 1px 4px; font: inherit; }
+  .lv select { background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 1px 4px; font: inherit; }
+  .lv-title { text-transform: uppercase; letter-spacing: .05em; font-size: 11px; }
+  #price { font-variant-numeric: tabular-nums; font-weight: 600; }
+  #rev-note, #frc-note { white-space: nowrap; }
+  #focus-steps button, #focus-exit { background: none; border: 1px solid var(--accent); color: var(--accent); border-radius: 4px; padding: 3px 8px; cursor: pointer; font: inherit; }
+  #focus-steps { display: inline-flex; gap: 4px; }
+  #status { color: var(--muted); font-size: 12px; margin-left: auto; }
+  .tfs { display: flex; gap: 4px; }
+  .tfs button { background: none; border: 1px solid var(--border); color: var(--muted); padding: 3px 10px; border-radius: 4px; cursor: pointer; font: inherit; }
+  .tfs button.active { color: var(--text); border-color: var(--accent); }
+  #chart { flex: 1; min-height: 0; position: relative; }
+  #ohlc { position: absolute; top: 6px; left: 10px; z-index: 5; pointer-events: none; font-size: 12px; font-variant-numeric: tabular-nums; color: var(--muted); background: rgba(14,17,22,.75); padding: 2px 6px; border-radius: 4px; }
+  #ohlc b { color: var(--text); font-weight: 600; } #ohlc .up { color: var(--up); } #ohlc .dn { color: var(--down); }
+  #chat-head { padding: 10px 16px; border-bottom: 1px solid var(--border); font-weight: 600; }
+  #log { flex: 1; overflow-y: auto; padding: 12px 16px; display: flex; flex-direction: column; gap: 10px; }
+  .msg { padding: 8px 12px; border-radius: 8px; white-space: pre-wrap; word-wrap: break-word; max-width: 92%; }
+  .msg.user { background: var(--user); align-self: flex-end; }
+  .msg.assistant { background: var(--bg); border: 1px solid var(--border); align-self: flex-start; }
+  #rec { padding: 10px 16px 12px; border-bottom: 1px solid var(--border); max-height: 42%; overflow-y: auto; flex: none; }
+  .rec-head { display: flex; align-items: baseline; gap: 10px; }
+  #rec-dir { font-size: 22px; font-weight: 700; letter-spacing: .02em; }
+  #rec-dir.buy { color: var(--up); } #rec-dir.sell { color: var(--down); } #rec-dir.none { color: var(--muted); }
+  #rec-state { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .06em; }
+  #rec-nums { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin: 8px 0 6px; }
+  #rec-nums div { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; }
+  #rec-nums small { display: block; color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .05em; }
+  #rec-nums b { font-variant-numeric: tabular-nums; font-size: 13px; }
+  #rec-list { margin: 6px 0 4px; max-height: 230px; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; }
+  #rec-list h4 { margin: 4px 0 0; font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; font-weight: 600; }
+  .trade { display: grid; grid-template-columns: auto 1fr auto; gap: 2px 8px; align-items: center; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px; font-size: 12px; }
+  .trade.done { opacity: .6; }
+  .pill { font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 4px; color: #0e1116; }
+  .pill.buy { background: var(--up); } .pill.sell { background: var(--down); }
+  .t-main { font-weight: 600; } .t-main span { color: var(--muted); font-weight: 400; margin-left: 4px; }
+  .t-nums { grid-column: 1 / -1; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .t-note { grid-column: 1 / -1; font-size: 11px; color: var(--muted); } .t-note b { color: var(--text); } .t-note.warn { color: #e0a84a; }
+  .t-state { font-size: 10px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+  .t-state.open { color: var(--accent); } .t-state.target { color: var(--up); } .t-state.stopped { color: var(--down); }
+  #rec-why { margin: 0; padding-left: 16px; color: var(--muted); font-size: 12px; line-height: 1.45; max-height: 110px; overflow-y: auto; }
+  #tabs { display: flex; border-bottom: 1px solid var(--border); }
+  .tab-btn { flex: 1; background: none; border: 0; color: var(--muted); padding: 8px 0; cursor: pointer; font: inherit; border-bottom: 2px solid transparent; }
+  .tab-btn.active { color: var(--text); border-bottom-color: var(--accent); }
+  .tab { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  .tab[hidden] { display: none; }
+  .muted { color: var(--muted); font-size: 12px; }
+  .tab-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; padding: 8px 12px; border-bottom: 1px solid var(--border); }
+  .tab select, .tab input, .tab-bar button, #n-form button { background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 3px 8px; font: inherit; }
+  .tab-bar button, #n-form button { cursor: pointer; }
+  .perf-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+  .pc { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px; } .pc small { display: block; color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .05em; }
+  .pc b { font-size: 18px; font-variant-numeric: tabular-nums; } .pc i { display: block; font-style: normal; font-size: 12px; font-variant-numeric: tabular-nums; }
+  .pc.win b, .pc.win i { color: var(--up); } .pc.loss b, .pc.loss i { color: var(--down); }
+  .netline { margin: 8px 0 4px; font-size: 13px; color: var(--muted); } .netline b { font-size: 22px; font-variant-numeric: tabular-nums; } .netline b.pos { color: var(--up); } .netline b.neg { color: var(--down); }
+  .perf-small { color: var(--muted); font-size: 11px; line-height: 1.5; } .perf-small b { color: var(--text); font-weight: 600; }
+  #h-stats details { margin-top: 6px; } #h-stats summary { cursor: pointer; color: var(--accent); }
+  .pos { color: var(--up); } .neg { color: var(--down); }
+  #h-stats { padding: 6px 12px; font-size: 11px; color: var(--muted); border-bottom: 1px solid var(--border); }
+  #h-stats table { width: 100%; border-collapse: collapse; } #h-stats td, #h-stats th { padding: 1px 4px; text-align: right; font-weight: 400; } #h-stats td:first-child, #h-stats th:first-child { text-align: left; }
+  #tab-history { overflow-y: auto; }   /* the whole History screen scrolls: filters, performance and list together */
+  #tab-history > * { flex: none; }
+  #h-list, #n-list { flex: 1; overflow-y: auto; padding: 8px 12px; display: flex; flex-direction: column; gap: 5px; }
+  #tab-history #h-list { overflow: visible; flex: none; }
+  .hrow { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; font-size: 12px; cursor: pointer; }
+  .hrow .top { display: grid; grid-template-columns: auto 1fr auto; gap: 8px; align-items: center; }
+  .h-main span { color: var(--muted); margin-left: 6px; }
+  .res { font-weight: 700; font-variant-numeric: tabular-nums; } .res.target { color: var(--up); } .res.stopped { color: var(--down); } .res.live, .res.missed, .res.none { color: var(--muted); }
+  .hdetail { margin-top: 6px; color: var(--muted); line-height: 1.45; cursor: default; }
+  .hdetail ul { margin: 4px 0 4px 16px; padding: 0; } .hdetail b { color: var(--text); }
+  .hdetail button, .why { background: none; border: 1px solid var(--border); color: var(--accent); border-radius: 4px; padding: 1px 7px; cursor: pointer; font: inherit; font-size: 11px; }
+  #m-box { padding: 8px 12px; border-bottom: 1px solid var(--border); display: flex; flex-direction: column; gap: 5px; }
+  #m-form { display: flex; gap: 5px; } #m-form input[type=number] { width: 80px; } #m-form input[placeholder^="Label"] { flex: 1; min-width: 0; } #m-form button { cursor: pointer; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 3px 8px; font: inherit; }
+  #c-form { display: flex; gap: 5px; flex-wrap: wrap; } #c-form input[type=number] { width: 80px; } #c-form input[placeholder^="Since"] { flex: 1; min-width: 160px; } #c-form input[placeholder="Label"] { width: 110px; } #c-form button { cursor: pointer; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 3px 8px; font: inherit; }
+  #c-box { margin-top: 8px; padding: 0 12px; } #c-list div { font-size: 12px; display: flex; justify-content: space-between; } #c-list button { background: none; border: 0; color: var(--muted); cursor: pointer; }
+  #m-list div { font-size: 12px; display: flex; justify-content: space-between; } #m-list button { background: none; border: 0; color: var(--muted); cursor: pointer; }
+  .badge { color: #0e1116; background: var(--accent); border-radius: 3px; padding: 0 5px; margin-left: 4px; font-weight: 700; letter-spacing: 0; }
+  #n-form { display: flex; gap: 6px; padding: 8px 12px; border-bottom: 1px solid var(--border); } #n-form input { flex: 1; }
+  .note { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; font-size: 12px; }
+  .note .meta { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .05em; margin-bottom: 2px; }
+  .note.proposed { border-style: dashed; }
+  .note .acts { margin-top: 5px; display: flex; gap: 6px; } .note .acts button { background: none; border: 1px solid var(--border); color: var(--text); border-radius: 4px; padding: 1px 8px; cursor: pointer; font: inherit; font-size: 11px; }
+  .msg.assistant p { margin: 0 0 6px; } .msg.assistant ul, .msg.assistant ol { margin: 2px 0 6px 18px; padding: 0; } .msg.assistant code { background: var(--panel); padding: 0 4px; border-radius: 3px; }
+  .msg.assistant table { border-collapse: collapse; margin: 4px 0; font-size: 12px; } .msg.assistant th, .msg.assistant td { border: 1px solid var(--border); padding: 2px 6px; }
+  .msg.assistant h3, .msg.assistant h4 { margin: 6px 0 3px; font-size: 13px; }
+  .msg.assistant { white-space: normal; }
+  .in-col { flex: 1; display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+  .in-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 11px; color: var(--muted); }
+  .in-tools button, .in-tools select, #ann-clear { background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 2px 8px; font: inherit; font-size: 11px; cursor: pointer; }
+  .in-tools label { display: flex; align-items: center; gap: 3px; cursor: pointer; }
+  #mic.listening { background: var(--down); color: #fff; border-color: var(--down); animation: pulse 1s infinite; }
+  #speak.on { border-color: var(--accent); color: var(--accent); }
+  @keyframes pulse { 50% { opacity: .55; } }
+  #my-form { margin: 4px 0; font-size: 12px; } #my-form summary { cursor: pointer; color: var(--accent); }
+  #my-setup-form { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; margin-top: 6px; }
+  #my-setup-form input, #my-setup-form select, #my-setup-form button { background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 3px 6px; font: inherit; font-size: 12px; min-width: 0; }
+  #my-setup-form input[placeholder^="Trigger"], #my-setup-form input[placeholder="Label"] { grid-column: 1 / -1; } #my-setup-form button { cursor: pointer; }
+  .trade.mine { border-color: #ff7ab2; } .rm { background: none; border: 0; color: var(--muted); cursor: pointer; margin-left: 4px; }
+  #day-bar { display: flex; align-items: center; gap: 8px; padding: 6px 12px; border-bottom: 1px solid var(--border); font-size: 12px; }
+  #day-bar select, #day-bar button { background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 2px 6px; font: inherit; font-size: 12px; } #day-bar button { cursor: pointer; color: var(--accent); }
+  #day-sel { flex: 1; min-width: 0; }
+  .glitch { background: none; border: 1px solid var(--border); color: #e0a84a; border-radius: 4px; padding: 1px 7px; cursor: pointer; font: inherit; font-size: 11px; margin-left: 4px; }
+  .daydiv { text-align: center; color: var(--muted); font-size: 11px; margin: 4px 0; }
+  .hint { color: var(--muted); font-size: 13px; }
+  form { display: flex; gap: 8px; padding: 12px; border-top: 1px solid var(--border); }
+  textarea { flex: 1; resize: none; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; font: inherit; height: 56px; }
+  textarea:focus { outline: 1px solid var(--accent); }
+  form button { background: var(--accent); color: #111; border: 0; border-radius: 6px; padding: 0 16px; font-weight: 600; cursor: pointer; }
+  form button:disabled { opacity: .5; cursor: default; }
+  @media (max-width: 800px) { body { flex-direction: column; } #right { width: auto; max-width: none; height: 50vh; border-left: 0; border-top: 1px solid var(--border); } #left { height: 50vh; flex: none; } }
+</style>
+</head>
+<body>
+<div id="left">
+  <header>
+    <h1>XAUUSD</h1>
+    <span id="price">–</span>
+    <div class="tfs" id="tfs"></div>
+    <div class="lv" id="frc-controls">
+      <label style="--c:#e6e9ef"><input type="checkbox" id="frc-on" checked>FRC</label>
+      <label class="atr" title="After one FRC, hide further same-direction FRCs until an opposite-colour candle closes"><input type="checkbox" id="frc-hide">hide repeats</label>
+      <span id="frc-note" class="lv-title" style="text-transform:none"></span>
+    </div>
+    <div class="lv" id="rev-controls">
+      <label style="--c:#e6e9ef"><input type="checkbox" id="rev-on" checked>Reversals</label>
+      <select id="rev-show" title="How many reversal setups to draw">
+        <option value="10">last 10</option><option value="pending">pending only</option><option value="30">last 30</option><option value="all">all</option>
+      </select>
+      <span id="rev-note" class="lv-title" style="text-transform:none"></span>
+    </div>
+    <div class="lv" id="lv-controls">
+      <span class="lv-title">Levels</span>
+      <label style="--c:#ff9f43"><input type="checkbox" data-lt="1mo" checked>M</label>
+      <label style="--c:#c792ea"><input type="checkbox" data-lt="1w" checked>W</label>
+      <label style="--c:#e0b84a"><input type="checkbox" data-lt="1d" checked>D</label>
+      <label style="--c:#4aa3e0"><input type="checkbox" data-lt="4h" checked>4H</label>
+      <span class="lv-title" title="Unfilled fair value gaps: continuation zones. Red = bearish (trend down), green = bullish, ✓ = it caused a break of structure">FVG</span>
+      <label style="--c:#8b95a5"><input type="checkbox" data-fvg="1h" checked>1H</label>
+      <label style="--c:#8b95a5"><input type="checkbox" data-fvg="4h" checked>4H</label>
+      <label style="--c:#8b95a5"><input type="checkbox" data-fvg="1d" checked>D</label>
+      <span class="muted" title="What a level is for depends on the candle AFTER it: if that candle went up it is a buying level (▲, support); if it went down it is a selling level (▼, resistance)">▲ buy level · ▼ sell level</span>
+      <label class="atr" title="How close price must be, as a multiple of each timeframe's ATR(14)">within <input type="number" id="atr-mult" value="0.25" min="0.05" max="3" step="0.05"> ATR</label>
+    </div>
+    <span id="focus-steps" hidden><button data-step="level">Level</button><button data-step="trigger">Trigger</button><button data-step="plan">Plan</button><button data-step="fvg">FVG</button></span>
+    <button id="focus-exit" hidden title="The assistant is explaining one setup and has hidden everything else on the chart. Click to bring the normal chart back.">Exit focus ✕</button>
+    <button id="ann-clear" hidden title="Remove the drawings the assistant made">Clear drawings</button>
+    <span id="status"></span>
+  </header>
+  <div id="chart"></div>
+</div>
+<div id="right">
+  <div id="chat-head">Trading partner</div>
+  <div id="tabs">
+    <button class="tab-btn active" data-tab="chat">Chat</button>
+    <button class="tab-btn" data-tab="history">History</button>
+    <button class="tab-btn" data-tab="notes">Notes</button>
+  </div>
+  <div class="tab" id="tab-chat">
+    <div id="day-bar"><select id="day-sel" title="Your chats. Each one is separate: only the chat you are in is sent to the assistant."></select><button id="chat-new" title="Start a new chat. Nothing from your other chats is sent along, which is also cheaper.">＋ New chat</button></div>
+  <div id="rec">
+      <div class="rec-head"><span id="rec-dir" class="none">…</span><span id="rec-state"></span></div>
+      <div id="phase-bar" class="muted" title="What is it? A accumulation (range / reversal), M manipulation (a trend that continues, no reversals), D distribution, X reversal or continuation. M weeks and M days do not reverse.">
+        Month <select data-ph="month"></select> Week <select data-ph="week"></select> Day <select data-ph="day"></select>
+        <span id="phase-note"></span>
+      </div>
+      <div id="rec-nums" hidden></div>
+      <div id="rec-list"></div>
+      <details id="my-form"><summary>＋ Add my own setup</summary>
+        <form id="my-setup-form">
+          <select id="ms-dir"><option value="buy">Buy</option><option value="sell">Sell</option></select>
+          <input id="ms-entry" type="number" step="0.01" placeholder="Entry" required>
+          <input id="ms-stop" type="number" step="0.01" placeholder="Stop" required>
+          <input id="ms-target" type="number" step="0.01" placeholder="Target (optional)">
+          <select id="ms-tf"><option value="1h">1H trigger</option><option value="15m">15M trigger</option><option value="4h">4H trigger</option></select>
+          <input id="ms-origin" type="number" step="0.01" placeholder="Level it is based on (optional)">
+          <input id="ms-time" placeholder="Trigger candle time YYYY-MM-DD HH:MM (blank = last closed)">
+          <input id="ms-label" placeholder="Label">
+          <button>Add to the card</button> <span id="ms-msg" class="muted"></span>
+        </form>
+      </details>
+      <ul id="rec-why"></ul>
+    </div>
+    <div id="log"><div class="hint">Ask about the setup on the chart, e.g. "What's your read on this timeframe?" The assistant sees the latest candles for the timeframe you have selected.</div></div>
+    <form id="form">
+      <div class="in-col">
+        <textarea id="input" placeholder="Type, or press the microphone and talk…"></textarea>
+        <div class="in-tools">
+          <button type="button" id="mic" title="Start talking. It keeps listening until you press this button again.">🎤 Talk</button>
+          <button type="button" id="speak" title="Have the assistant read its answers aloud as they stream in">🔈 Voice off</button>
+          <select id="voice-sel" title="Voice" hidden></select>
+          <label title="After the assistant finishes speaking, start listening again"><input type="checkbox" id="handsfree">hands-free</label>
+          <label title="Send automatically when you press the microphone button to stop"><input type="checkbox" id="autosend" checked>send when I stop</label>
+          <button type="button" id="stop-voice" hidden>■ Stop</button>
+        </div>
+      </div>
+      <button id="send">Send</button>
+    </form>
+  </div>
+  <div class="tab" id="tab-history" hidden>
+    <div class="tab-bar">
+      <select id="h-state"><option value="all">All</option><option value="live">Live</option><option value="done">Finished</option></select>
+      <select id="h-outcome"><option value="">Any result</option><option value="target">Target hit</option><option value="stopped">Stopped</option><option value="missed">Missed</option><option value="skipped">Skipped (R:R below 1)</option></select>
+      <span id="h-count" class="muted"></span>
+    </div>
+    <div class="tab-bar" id="h-perf-bar">
+      <select id="p-scope" title="Which setups to count"><option value="engine">Engine setups</option><option value="mine">My own setups</option><option value="all">Both</option></select>
+      <select id="p-days" title="Only setups that ended in this period"><option value="0">All time</option><option value="-1">Today</option><option value="7">Last 7 days</option><option value="30">Last 30 days</option></select>
+      <select id="p-feed" title="The same market move is stored once per feed, so count one feed at a time"><option value="active">This feed</option><option value="mt5">MT5</option><option value="twelvedata">Twelve Data</option><option value="all">Both (some trades twice)</option></select>
+      <label class="muted" title="Leave out setups that were rebuilt from history; count only the ones the app watched happen live"><input type="checkbox" id="p-live"> watched live only</label>
+    </div>
+    <div id="h-stats"></div>
+    <div id="h-list"></div>
+  </div>
+  <div class="tab" id="tab-notes" hidden>
+    <div class="tab-bar">
+      <button id="n-generate">Generate observations</button>
+      <span id="n-msg" class="muted"></span>
+    </div>
+    <form id="n-form"><input id="n-text" placeholder="Teach it a rule or correction…"><button>Save lesson</button></form>
+    <div id="m-box">
+      <div class="muted">Marked levels (reference only, e.g. a close from another provider)</div>
+      <form id="m-form"><input id="m-price" type="number" step="0.01" placeholder="Price"><select id="m-tf"><option value="1d">D</option><option value="4h">4H</option><option value="1w">W</option></select><input id="m-label" placeholder="Label, e.g. D close Oct 14 (other provider)"><button>Mark</button></form>
+      <div id="m-list"></div>
+    </div>
+    <div id="c-box">
+      <div class="muted">Custom levels: levels YOU say exist. The engine uses them like its own (setups start from them, they can be targets). Their setups are kept out of the engine's win rate.</div>
+      <form id="c-form"><input id="c-price" type="number" step="0.01" placeholder="Price"><select id="c-dir"><option value="sell">Sell (resistance)</option><option value="buy">Buy (support)</option></select><select id="c-tf"><option value="1d">D</option><option value="4h">4H</option><option value="1w">W</option></select><input id="c-since" placeholder="Since, e.g. 2026-10-16 00:00 (optional)"><input id="c-label" placeholder="Label"><button>Add</button></form>
+      <div id="c-list"></div>
+    </div>
+    <div id="n-list"></div>
+  </div>
+</div>
+
+<script>
+const TFS = ["5m", "15m", "1h", "4h", "1d", "1w", "1mo"];
+let tf = localStorage.getItem("tf") || "1h";
+const urlTf = new URLSearchParams(location.search).get("tf");
+if (TFS.includes(urlTf)) tf = urlTf;
+if (!TFS.includes(tf)) tf = "1h";
+
+const chart = LightweightCharts.createChart(document.getElementById("chart"), {
+  autoSize: true,
+  layout: { background: { color: "#0e1116" }, textColor: "#8b95a5" },
+  grid: { vertLines: { color: "#1b212b" }, horzLines: { color: "#1b212b" } },
+  timeScale: { timeVisible: true, secondsVisible: false, borderColor: "#262d38" },
+  rightPriceScale: { borderColor: "#262d38" },
+  crosshair: { mode: 0 },
+});
+const $ohlc = document.createElement("div"); $ohlc.id = "ohlc"; document.getElementById("chart").appendChild($ohlc);
+function showOhlc(c) {   // O H L C of the hovered candle (the latest one when the pointer is off the chart)
+  if (!c) { $ohlc.textContent = ""; return; }
+  const prev = chartCandles.length ? chartCandles.findIndex(x => x.time === c.time) : -1;
+  const pc = prev > 0 ? chartCandles[prev - 1].close : null;                       // direction follows the close vs the previous close
+  const ch = pc == null ? null : c.close - pc, cls = ch == null ? "" : ch >= 0 ? "up" : "dn";
+  $ohlc.innerHTML = `<b>${fmtFull(c.time)}</b> &nbsp;O <b>${c.open.toFixed(2)}</b> H <b>${c.high.toFixed(2)}</b> L <b>${c.low.toFixed(2)}</b> C <b class="${cls}">${c.close.toFixed(2)}</b>`
+    + (ch == null ? "" : ` <span class="${cls}">${ch >= 0 ? "+" : ""}${ch.toFixed(2)} vs prev close</span>`);
+}
+const series = chart.addCandlestickSeries({
+  upColor: "#26a69a", downColor: "#ef5350", borderVisible: false,
+  wickUpColor: "#26a69a", wickDownColor: "#ef5350",
+});
+chart.subscribeCrosshairMove((p) => { const b = p.seriesData && p.seriesData.get(series); showOhlc(b ? { ...b, time: p.time } : (live || null)); });
+
+const $price = document.getElementById("price"), $status = document.getElementById("status");
+
+const TF_SEC = { "5m": 300, "15m": 900, "1h": 3600, "4h": 14400, "1d": 86400, "1w": 604800, "1mo": 2678400 };
+let chartCandles = [];
+let live = null;      // the forming candle, updated by ticks
+let loadedTf = null;  // the timeframe whose candles are on the chart now
+let loadSeq = 0;      // guards against a slow response for a previous timeframe
+let feed = "connecting";
+let srcLabel = "";
+
+function showPrice() {
+  if (!live) return;
+  $price.textContent = live.close.toFixed(2);
+  $price.style.color = live.close >= live.open ? "var(--up)" : "var(--down)";
+}
+function showStatus(extra) {
+  const dot = feed === "live" ? "● live" : feed === "connecting" ? "○ connecting" : "○ " + feed;
+  $status.textContent = dot + (srcLabel ? " · " + srcLabel : "") + (extra ? " · " + extra : "");
+}
+
+async function loadCandles(fit) {
+  const seq = ++loadSeq;
+  try {
+    const r = await fetch(`/api/candles?timeframe=${tf}`);
+    if (!r.ok) throw new Error((await r.json()).detail || r.statusText);
+    const candles = await r.json();
+    if (seq !== loadSeq) return;
+    chartCandles = candles; loadedTf = tf;
+    if (fit || !live) {
+      series.setData(candles);
+      live = { ...candles[candles.length - 1] };
+      if (fit) {
+        chart.timeScale().fitContent();
+        const bars = +new URLSearchParams(location.search).get("bars");
+        if (bars) chart.timeScale().setVisibleLogicalRange({ from: candles.length - bars, to: candles.length + 5 });
+      }
+    } else {
+      // Background reconcile. update() only accepts the newest bar, so rebuild with setData
+      // (keeps zoom/scroll), merging the tick-driven live candle so it is never overwritten by older data.
+      const last = candles[candles.length - 1];
+      if (last.time === live.time) {
+        live.open = last.open; live.high = Math.max(live.high, last.high); live.low = Math.min(live.low, last.low);
+        if (feed !== "live") live.close = last.close;
+        candles[candles.length - 1] = { ...live };
+      } else if (last.time < live.time) {
+        candles.push({ ...live });   // REST hasn't caught up to the candle ticks already started
+      } else {
+        live = { ...last };          // REST is ahead (tick feed was down)
+      }
+      series.setData(candles);
+    }
+    showPrice();
+    showStatus();
+    if (fit) { clearLevels(); loadLevels(); loadFRC(); loadReversals(); loadFvg(); }
+  } catch (e) {
+    $status.textContent = "Data error: " + e.message;
+  }
+}
+
+function applyTick(t, p) {
+  if (!live) return;
+  // Candle boundaries come from the feed (a broker's week starts on Sunday, the Unix epoch's on Thursday),
+  // so step forward from the live candle's own open time instead of rounding the timestamp.
+  const sec = TF_SEC[tf];
+  const bucket = t >= live.time + sec ? live.time + Math.floor((t - live.time) / sec) * sec : live.time;
+  if (bucket > live.time) live = { time: bucket, open: p, high: p, low: p, close: p };
+  else if (bucket === live.time) { live.high = Math.max(live.high, p); live.low = Math.min(live.low, p); live.close = p; }
+  else return;
+  series.update(live);
+  showPrice();
+}
+
+function connectTicks() {
+  const ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws/ticks");
+  ws.onmessage = (ev) => {
+    const m = JSON.parse(ev.data);
+    if (m.status) { feed = m.status; showStatus(); }
+    else applyTick(m.t, m.p);
+  };
+  ws.onclose = () => { feed = "disconnected, retrying"; showStatus(); setTimeout(connectTicks, 2000); };
+}
+
+const $tfs = document.getElementById("tfs");
+TFS.forEach(t => {
+  const b = document.createElement("button");
+  b.textContent = t === "1mo" ? "1M" : t.toUpperCase();
+  b.onclick = () => { tf = t; localStorage.setItem("tf", t); live = null; render(); syncLevelControls(); loadCandles(true); };
+  b.dataset.tf = t;
+  $tfs.appendChild(b);
+});
+function render() { [...$tfs.children].forEach(b => b.classList.toggle("active", b.dataset.tf === tf)); }
+render();
+syncLevelControls();
+loadCandles(true);
+connectTicks();
+setInterval(() => loadCandles(false), 60000);
+
+
+// ---- close levels (Daily / 4H / 1H candle closes that price is near) ----
+const LV_COLORS = { "1mo": "#ff9f43", "1w": "#c792ea", "1d": "#e0b84a", "4h": "#4aa3e0" };
+const LV_LABELS = { "1mo": "M", "1w": "W", "1d": "D", "4h": "4H" };
+const $atr = document.getElementById("atr-mult");
+const urlAtr = new URLSearchParams(location.search).get("atr");
+if (urlAtr) $atr.value = urlAtr;
+
+// Draws each level as a dotted horizontal line from its origin candle to the right-hand price scale,
+// wherever the chart is panned or zoomed, with a TF + price tag on the scale.
+class LevelsPrimitive {
+  constructor() { this.levels = []; this._axis = []; this._pv = { zOrder: () => "normal", renderer: () => ({ draw: (t) => this._draw(t) }) }; }
+  attached({ chart, series, requestUpdate }) { this._chart = chart; this._series = series; this._req = requestUpdate; }
+  detached() {}
+  updateAllViews() {}
+  paneViews() { return [this._pv]; }
+  priceAxisViews() { return this._axis; }
+  setLevels(levels) {
+    this.levels = levels;
+    this._axis = levels.map(lv => ({
+      coordinate: () => this._series.priceToCoordinate(lv.price) ?? -1000,
+      text: () => `${lv.custom ? "★" : ""}${lv.label || LV_LABELS[lv.tf]} ${lv.price.toFixed(2)}`,
+      textColor: () => "#0e1116",
+      backColor: () => LV_COLORS[lv.tf],
+      visible: () => true,
+      tickVisible: () => true,
+    }));
+    if (this._req) this._req();
+  }
+  _draw(target) {
+    target.useMediaCoordinateSpace(({ context: ctx, mediaSize }) => {
+      for (const lv of this.levels) {
+        const y = this._series.priceToCoordinate(lv.price);
+        if (y === null) continue;
+        const x0 = this._chart.timeScale().timeToCoordinate(lv.start);
+        const from = x0 === null ? 0 : Math.max(0, x0);
+        // Levels from several timeframes at one price: every timeframe keeps its own colour, interleaved along the one line.
+        const tfs = lv.tfs && lv.tfs.length ? lv.tfs : [lv.tf], n = tfs.length, seg = n > 1 ? 5 : 2;
+        tfs.forEach((t, i) => {
+          ctx.beginPath();
+          ctx.strokeStyle = LV_COLORS[t];
+          ctx.lineWidth = n > 1 ? 2 : (t === "4h" ? 1 : 2);
+          ctx.setLineDash(n > 1 ? [seg, seg * (n - 1)] : [2, 3]);
+          ctx.lineDashOffset = -i * seg;
+          ctx.moveTo(from, y);
+          ctx.lineTo(mediaSize.width, y);
+          ctx.stroke();
+        });
+        ctx.setLineDash([]); ctx.lineDashOffset = 0;
+      }
+    });
+  }
+}
+const levelsLayer = new LevelsPrimitive();
+series.attachPrimitive(levelsLayer);
+
+function snapToBar(t) {
+  // Latest chart bar at or before t (the first bar if the level is older than the loaded history).
+  let lo = 0, hi = chartCandles.length - 1, ans = 0;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (chartCandles[mid].time <= t) { ans = mid; lo = mid + 1; } else hi = mid - 1;
+  }
+  return chartCandles[ans].time;
+}
+
+async function loadLevels() {
+  if (!chartCandles.length || !live) return;
+  // A level timeframe shows only on charts of the same or a lower timeframe (a 4H level never appears on the Daily chart).
+  const boxes = [...document.querySelectorAll("[data-lt]")].filter(i => TF_SEC[i.dataset.lt] >= TF_SEC[tf]);
+  const shown = new Set(boxes.filter(i => i.checked).map(i => i.dataset.lt));
+  if (!shown.size) { clearLevels(); return; }
+  let res;
+  try {
+    // ask for every eligible timeframe so a price shared by several of them is labelled with all of them
+    const r = await fetch(`/api/levels?atr_mult=${encodeURIComponent($atr.value || 0.25)}&tfs=${boxes.map(i => i.dataset.lt).join(",")}`);
+    if (!r.ok) return;
+    res = await r.json();
+  } catch { return; }
+  // One line per price. A price that is a level on several timeframes carries all of them in its label, e.g. "M·W·D▼".
+  const ORDER = ["1mo", "1w", "1d", "4h"], groups = new Map();
+  for (const lv0 of res.levels) {
+    const key = lv0.price.toFixed(2) + (lv0.custom ? "c" : "");
+    if (!groups.has(key)) groups.set(key, []);
+    const g = groups.get(key);
+    // the server also names the other timeframes (4H included) that have a level at this exact price, near or not
+    for (const lv of [lv0, ...(lv0.also || []).map(a => ({ ...lv0, ...a }))]) {
+      if (TF_SEC[lv.tf] >= TF_SEC[tf] && !g.some(x => x.tf === lv.tf)) g.push(lv);
+    }
+  }
+  const arrow = (p) => p === "buy" ? "▲" : p === "sell" ? "▼" : "";
+  const merged = [];
+  for (const g of groups.values()) {
+    if (!g.some(lv => shown.has(lv.tf))) continue;
+    g.sort((x, y) => ORDER.indexOf(x.tf) - ORDER.indexOf(y.tf));
+    const top = g[0], pol = new Set(g.map(lv => lv.polarity));
+    const label = pol.size === 1 ? g.map(lv => LV_LABELS[lv.tf]).join("·") + arrow(top.polarity)
+                                 : g.map(lv => LV_LABELS[lv.tf] + arrow(lv.polarity)).join("·");     // the timeframes disagree on what it is for: show each
+    merged.push({ tf: top.tf, tfs: g.map(lv => lv.tf), price: top.price, polarity: top.polarity, custom: top.custom, label,
+                  start: Math.min(...g.map(lv => snapToBar(lv.time + TF_SEC[lv.tf] - TF_SEC[tf]))) });
+  }
+  levelsLayer.setLevels(focusState ? [] : merged);
+}
+
+function syncLevelControls() {
+  document.querySelectorAll("[data-lt]").forEach(i => {
+    const ok = TF_SEC[i.dataset.lt] >= TF_SEC[tf];
+    i.disabled = !ok;
+    i.parentElement.style.opacity = ok ? 1 : 0.35;
+  });
+}
+function clearLevels() { levelsLayer.setLevels([]); }
+document.getElementById("lv-controls").addEventListener("change", loadLevels);
+setInterval(loadLevels, 10000);
+
+
+// ---- chart markers: plain FRC/CPLOC candles + reversal trigger candles share one marker list ----
+let frcMarkers = [], triggerMarkers = [];
+function applyMarkers() {
+  const triggerTimes = new Set(triggerMarkers.map(m => m.time));   // a trigger replaces the plain FRC marker on its bar
+  const all = [...frcMarkers.filter(m => !triggerTimes.has(m.time)), ...triggerMarkers];
+  all.sort((x, y) => x.time - y.time);
+  series.setMarkers(all);
+}
+
+// ---- FRC / CPLOC candles (completed candles on the chart timeframe) ----
+const $frcOn = document.getElementById("frc-on"), $frcHide = document.getElementById("frc-hide");
+let frcSeq = 0;
+const $frcNote = document.getElementById("frc-note");
+async function loadFRC() {
+  const seq = ++frcSeq;
+  if (!$frcOn.checked || focusState) { frcMarkers = []; applyMarkers(); return; }
+  try {
+    const r = await fetch(`/api/frc?timeframe=${tf}&hide_repeats=${$frcHide.checked}`);
+    if (!r.ok || seq !== frcSeq) return;
+    const res = await r.json();
+    if (seq !== frcSeq) return;
+    $frcNote.textContent = res.supported ? "" : "15M, 1H & 4H only";
+    frcMarkers = res.frc.map(f => f.direction === "bull"
+      ? { time: f.time, position: "belowBar", shape: "arrowUp", color: "#e6e9ef", text: "FRC" }
+      : { time: f.time, position: "aboveBar", shape: "arrowDown", color: "#e6e9ef", text: "FRC" });
+    applyMarkers();
+  } catch {}
+}
+document.getElementById("frc-controls").addEventListener("change", loadFRC);
+setInterval(loadFRC, 15000);   // new completed candles appear within 15 s of closing
+
+// ---- reversal setups ----
+// Every setup targets the next valid Daily level. Triggers: 1H CPLOC on a Daily level (reversal);
+// 15M CPLOC on a 4H level after a Daily level was hit (early); 15M CPLOC on a 4H level during a pullback
+// after a 1H BOS while a reversal is pending (continuation).
+// Drawn: the CPLOC candle that triggered it (labelled with its timeframe), a connector from the level
+// it formed on to the target, and the target line (to where it was hit/failed, or to the right edge while pending).
+const REV_COLORS = { pending: "#e6e9ef", completed: "#26a69a", failed: "#ef5350" };
+const INVALID_COLOR = "#6b7280";
+const CHART_LABEL = { "daily|reversal": "1H CPLOC", "daily|early": "15M CPLOC · early", "daily|continuation": "15M CPLOC · cont.",
+  "weekly|reversal": "1H CPLOC · Weekly", "monthly|reversal": "1H CPLOC · Monthly", "monthly|early": "15M CPLOC · Monthly early", "weekly|early": "15M CPLOC · Weekly early", "daily|hold": "1H candle · Daily hold",
+  "weekly|hold": "1H candle · Weekly hold", "monthly|hold": "1H candle · Monthly hold", "manual|manual": "Your setup", "weekly|level-reversal": "4H CPLOC · Weekly level", "weekly|level-hold": "4H candle · Weekly level", "monthly|level-reversal": "Daily CPLOC · Monthly level", "monthly|level-hold": "Daily candle · Monthly level", "fvg|1h": "1H FVG rejection", "fvg|4h": "4H FVG rejection", "fvg|1d": "Daily FVG rejection", "fvg|15m": "15M CPLOC at an FVG" };
+function kindLabel(s) {
+  const base = CHART_LABEL[s.tier + "|" + s.kind] || s.kind;
+  return base + (s.invalid ? " · invalid" : s.htf_conflict && s.htf_conflict.now_passes ? " ⚠" : "");
+}
+const setupColor = (s) => s.invalid ? INVALID_COLOR : REV_COLORS[s.status];
+class SetupsPrimitive {
+  constructor() { this.setups = []; this._pv = { zOrder: () => "top", renderer: () => ({ draw: (t) => this._draw(t) }) }; }
+  attached({ chart, series, requestUpdate }) { this._chart = chart; this._series = series; this._req = requestUpdate; }
+  detached() {}
+  updateAllViews() {}
+  paneViews() { return [this._pv]; }
+  setSetups(setups) { this.setups = setups; if (this._req) this._req(); }
+  _draw(target) {
+    target.useMediaCoordinateSpace(({ context: ctx, mediaSize }) => {
+      const ts = this._chart.timeScale();
+      ctx.font = "11px -apple-system, sans-serif";
+      for (const s of this.setups) {
+        const hist = s.hist && s.hist.length ? s.hist : [{ x: s.xt, target: s.target }];
+        const yT = this._series.priceToCoordinate(hist[0].target), yO = this._series.priceToCoordinate(s.origin);
+        const x0 = ts.timeToCoordinate(s.xt);
+        if (yT === null || yO === null || x0 === null) continue;
+        const x1 = s.xe ? ts.timeToCoordinate(s.xe) : null;
+        const end = x1 === null ? mediaSize.width : x1;
+        const col = setupColor(s), up = s.direction === "bull";
+        ctx.strokeStyle = col; ctx.fillStyle = col;
+        // connector origin -> first target at the trigger candle
+        ctx.globalAlpha = 0.5; ctx.lineWidth = 1; ctx.setLineDash([2, 3]);
+        ctx.beginPath(); ctx.moveTo(x0, yO); ctx.lineTo(x0, yT); ctx.stroke();
+        ctx.globalAlpha = 1;
+        // The target as it stood over time: a new level created mid-trade replaces the old target (stepped line).
+        let prevY = null;
+        for (let j = 0; j < hist.length; j++) {
+          const last = j === hist.length - 1;
+          const xs = j === 0 ? x0 : ts.timeToCoordinate(hist[j].x);
+          const xe = last ? end : ts.timeToCoordinate(hist[j + 1].x);
+          const y = this._series.priceToCoordinate(hist[j].target);
+          if (xs === null || xe === null || y === null) { prevY = y; continue; }
+          if (prevY !== null) {   // vertical step from the old target to the new one
+            ctx.globalAlpha = 0.5; ctx.lineWidth = 1; ctx.setLineDash([2, 3]);
+            ctx.beginPath(); ctx.moveTo(xs, prevY); ctx.lineTo(xs, y); ctx.stroke(); ctx.globalAlpha = 1;
+          }
+          ctx.lineWidth = 1.5; ctx.setLineDash(last && s.status === "completed" ? [] : [5, 4]);
+          ctx.globalAlpha = last ? 1 : 0.45;       // superseded targets are dimmed
+          ctx.beginPath(); ctx.moveTo(xs, y); ctx.lineTo(xe, y); ctx.stroke();
+          ctx.setLineDash([]); ctx.globalAlpha = last ? 1 : 0.6;
+          const label = (up ? "▲ " : "▼ ") + hist[j].target.toFixed(2) + ({ weekly: " W", monthly: " M" }[s.tier] || "")
+            + (last ? (s.invalid ? " invalid" : s.status === "completed" ? " ✓" : s.status === "failed" ? " ✕" : "") : "");
+          ctx.fillText(label, xs + 7, up ? y - 5 : y + 13);
+          ctx.globalAlpha = 1;
+          prevY = y;
+        }
+        ctx.setLineDash([]);
+      }
+    });
+  }
+}
+const setupsLayer = new SetupsPrimitive();
+series.attachPrimitive(setupsLayer);
+const urlShow = new URLSearchParams(location.search).get("show");
+if (urlShow) document.getElementById("rev-show").value = urlShow;
+const $revOn = document.getElementById("rev-on"), $revNote = document.getElementById("rev-note");
+let revSeq = 0;
+async function loadReversals() {
+  const seq = ++revSeq;
+  if (!$revOn.checked || focusState) { setupsLayer.setSetups([]); triggerMarkers = []; applyMarkers(); $revNote.textContent = ""; return; }
+  if (!chartCandles.length) return;
+  try {
+    const r = await fetch("/api/reversals");
+    if (!r.ok || seq !== revSeq) return;
+    const res = await r.json();
+    if (seq !== revSeq) return;
+    const all = res.setups;
+    // A trigger candle is shown on charts of its own timeframe or lower (a 15M CPLOC never appears on the 1H chart).
+    // On a lower chart it sits on the last bar inside the CPLOC candle, i.e. when the signal became known.
+    const mode = document.getElementById("rev-show").value;
+    let visible = all.filter(s => TF_SEC[s.trigger_tf] >= TF_SEC[tf]);
+    if (mode === "pending") visible = visible.filter(s => s.status === "pending" && !s.invalid);
+    else if (mode !== "all") visible = visible.slice(-Number(mode));
+    const shown = visible.map(s => ({
+      ...s,
+      xt: snapToBar(s.time + TF_SEC[s.trigger_tf] - TF_SEC[tf]),
+      xe: s.resolved_time ? snapToBar(s.resolved_time) : null,
+      hist: s.target_history.map((h, j) => ({ x: j === 0 ? snapToBar(s.time + TF_SEC[s.trigger_tf] - TF_SEC[tf]) : snapToBar(h.time), target: h.target })),
+    }));
+    setupsLayer.setSetups(shown);
+    triggerMarkers = shown.map(s => ({
+      time: s.xt, position: s.direction === "bull" ? "belowBar" : "aboveBar",
+      shape: s.direction === "bull" ? "arrowUp" : "arrowDown", color: setupColor(s), size: 2,
+      text: kindLabel(s),
+    }));
+    applyMarkers();
+    const live_ = all.filter(s => !s.invalid), last = live_[live_.length - 1];
+    $revNote.textContent = last
+      ? `latest: ${kindLabel(last)} ${last.direction === "bull" ? "▲" : "▼"} ${last.status} → ${last.target.toFixed(2)}`
+      : "none";
+  } catch {}
+}
+document.getElementById("rev-controls").addEventListener("change", loadReversals);
+setInterval(loadReversals, 15000);
+
+// ---- data source label (MT5 / Twelve Data) ----
+async function loadSource() {
+  try {
+    const r = await fetch("/api/source");
+    if (!r.ok) return;
+    const s = await r.json();
+    srcLabel = s.source === "mt5"
+      ? "MT5" + (s.mt5.symbol ? " " + s.mt5.symbol : "") + (s.mt5.seconds_since_push > 30 ? " (stale)" : "")
+      : s.source === "twelvedata" ? "Twelve Data" : "Yahoo";
+    showStatus();
+  } catch {}
+}
+loadSource();
+setInterval(loadSource, 10000);
+
+// ---- recommendation card (BUY / SELL / NO TRADE from the engine) + entry / stop / target lines ----
+const $recList = document.getElementById("rec-list");
+function renderTrades(trades) {
+  const row = (t) => {
+    const done = ["target", "stopped", "missed"].includes(t.state);
+    const stateText = { waiting: "wait for retrace", open: "entry filled", target: "target hit", stopped: "stopped", missed: "missed" }[t.state];
+    return `<div class="trade ${done ? "done" : ""} ${t.manual ? "mine" : ""}">
+      <span class="pill ${t.direction === "BUY" ? "buy" : "sell"}">${t.direction}</span>
+      <div class="t-main">${t.manual ? "Your setup" : t.short}<span>${escH(t.custom_label || "")}${t.custom_level ? " ★ your level " + t.custom_level.price : ""} ${t.trigger_time_text}${done ? " · ended " + t.finished_at_text : ""}</span>${t.manual ? `<button class="rm" data-manual="${t.id.replace("manual-", "")}" title="Remove my setup">✕</button>` : ""}</div>
+      <span class="t-state ${t.state}">${stateText}</span>
+      <div class="t-nums">Entry ${t.entry.toFixed(2)} · SL ${t.stop.toFixed(2)} · TP ${t.target.toFixed(2)} · ${t.rr}R
+        <button class="why" data-id="${t.id}" title="Ask the assistant why the engine identified this setup">why?</button>${(t.state === "stopped" || t.state === "target") ? `<button class="glitch" data-id="${t.id}" title="The feed showed a wick that did not happen on your chart: ignore that candle for this setup and carry on">not really hit</button>` : ""}</div>
+      ${t.fvg_exit ? `<div class="t-note" style="color:#4aa3e0">Closed at ${t.fvg_exit.price.toFixed(2)}: a 1H candle closed beyond the FVG ${t.fvg_exit.fvg[0]}-${t.fvg_exit.fvg[1]} that printed on the way (exit signal), ${t.fvg_exit.r}R on that part</div>` : ""}
+      ${t.partial ? `<div class="t-note" style="color:#4aa3e0">½ closes at ${t.partial.price.toFixed(2)} (breaker block: the close of candle 2, ${t.partial.r}R)${t.partial.hit ? " — done" : ""}; the rest runs to ${t.target.toFixed(2)}</div>` : ""}
+      ${t.phase_warning ? `<div class="t-note" style="color:#ef9a3c">⚠ ${escH(t.phase_warning)}</div>` : ""}
+      ${t.fvg ? `<div class="t-note" style="color:#e0b84a">⚠ ${escH(t.fvg.warning)}</div>` : ""}
+      ${t.next_target ? (() => { const n = t.next_target, tf = n.level_tf === "1mo" ? "Monthly" : n.level_tf === "1w" ? "Weekly" : "Daily", c = n.conditional;
+        return c ? `<div class="t-note">TP stays <b>${n.stays.toFixed(2)}</b> unless the ${tf} candle closes <b>${c.needs_close}</b> ${c.level.toFixed(2)} (that would make it a ${c.needs_close === "above" ? "buying" : "selling"} level and the new TP, from ${fmtT(n.at)}). It has not closed yet.</div>`
+          : `<div class="t-note">TP moves to <b>${n.target.toFixed(2)}</b> when the next ${tf} candle opens (${fmtT(n.at)})</div>`; })() : ""}
+      ${t.htf_conflict ? `<div class="t-note warn">⚠ ${escH(t.htf_conflict.text)}</div>` : ""}
+    </div>`;
+  };
+  const live = trades.filter(t => t.state === "waiting" || t.state === "open");
+  const fin = trades.filter(t => !(t.state === "waiting" || t.state === "open"));
+  let html = "";
+  if (live.length) html += `<h4>Live setups (${live.length})</h4>` + live.map(row).join("");
+  if (fin.length) html += `<h4>Finished in the last hour</h4>` + fin.map(row).join("");
+  $recList.innerHTML = html;
+}
+const $recDir = document.getElementById("rec-dir"), $recState = document.getElementById("rec-state"),
+      $recNums = document.getElementById("rec-nums"), $recWhy = document.getElementById("rec-why");
+let recLines = [];
+function clearRecLines() { recLines.forEach(l => series.removePriceLine(l)); recLines = []; }
+const PH_OPTS = [["?", "?"], ["A", "A accumulation"], ["M", "M manipulation"], ["D", "D distribution"], ["X", "X reversal/continuation"]];
+document.querySelectorAll("[data-ph]").forEach(sel => {
+  sel.innerHTML = PH_OPTS.map(([v, t]) => `<option value="${v}">${t}</option>`).join("");
+  sel.onchange = async () => { await fetch("/api/phase", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ scope: sel.dataset.ph, phase: sel.value }) }); loadRecommendation(); };
+});
+function showPhase(ph) {
+  if (!ph) return;
+  document.querySelectorAll("[data-ph]").forEach(sel => { if (document.activeElement !== sel) sel.value = ph.phase[sel.dataset.ph] || "?"; });
+  const unk = ph.unknown || [];
+  document.getElementById("phase-note").textContent = unk.length ? " · not set: " + unk.join(", ") : "";
+}
+async function loadRecommendation() {
+  try {
+    const r = await fetch("/api/recommendation");
+    if (!r.ok) return;
+    const rec = await r.json();
+    const cls = rec.direction === "BUY" ? "buy" : rec.direction === "SELL" ? "sell" : "none";
+    $recDir.textContent = rec.direction; $recDir.className = cls;
+    $recState.textContent = rec.state === "waiting" ? "wait for retrace" : rec.state === "open" ? "entry filled" : "";
+    $recWhy.innerHTML = "";
+    for (const t of rec.reasons || []) { const li = document.createElement("li"); li.textContent = t; $recWhy.appendChild(li); }
+    renderTrades(rec.trades || []);
+    showPhase(rec.phase);
+    clearRecLines();
+    if (focusState) return;                                   // explaining one setup: the headline's entry / stop / target lines stay off the chart
+    if (rec.direction === "NO TRADE") { $recNums.hidden = true; return; }
+    $recNums.hidden = false;
+    $recNums.innerHTML = [["Entry", rec.entry], ["Stop", rec.stop], ["Target", rec.target], ["R:R", rec.rr]]
+      .map(([k, v]) => `<div><small>${k}</small><b>${typeof v === "number" && k !== "R:R" ? v.toFixed(2) : v}</b></div>`).join("");
+    const mk = (price, color, title) => series.createPriceLine({
+      price, color, lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title });
+    recLines = [mk(rec.entry, "#4aa3e0", "ENTRY"), mk(rec.stop, "#ef5350", "SL"), mk(rec.target, "#26a69a", "TP")];
+  } catch {}
+}
+loadRecommendation();
+setInterval(loadRecommendation, 10000);
+
+// ---- small, safe markdown for the assistant's answers (everything is escaped first) ----
+function md(src) {
+  const esc = (t) => t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const inline = (t) => esc(t).replace(/`([^`]+)`/g, "<code>$1</code>").replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>");
+  const lines = src.split("\n"), out = [];
+  let list = null, para = [];
+  const flushPara = () => { if (para.length) { out.push("<p>" + para.join("<br>") + "</p>"); para = []; } };
+  const closeList = () => { if (list) { out.push(`</${list}>`); list = null; } };
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i];
+    if (/^\s*\|.*\|\s*$/.test(l)) {                               // table: consecutive |...| lines
+      flushPara(); closeList();
+      const rows = [];
+      while (i < lines.length && /^\s*\|.*\|\s*$/.test(lines[i])) { rows.push(lines[i]); i++; }
+      i--;
+      const cells = (r) => r.trim().replace(/^\||\|$/g, "").split("|").map(c => c.trim());
+      const body = rows.filter(r => !/^\s*\|?[\s:|-]+\|?\s*$/.test(r) || /[A-Za-z0-9]/.test(r));
+      out.push("<table>" + body.map((r, k) => "<tr>" + cells(r).map(c => k === 0 ? `<th>${inline(c)}</th>` : `<td>${inline(c)}</td>`).join("") + "</tr>").join("") + "</table>");
+      continue;
+    }
+    const h = l.match(/^#{1,4}\s+(.*)/), ul = l.match(/^\s*[-*]\s+(.*)/), ol = l.match(/^\s*\d+[.)]\s+(.*)/);
+    if (h) { flushPara(); closeList(); out.push(`<h4>${inline(h[1])}</h4>`); }
+    else if (ul || ol) {
+      flushPara();
+      const kind = ul ? "ul" : "ol";
+      if (list !== kind) { closeList(); out.push(`<${kind}>`); list = kind; }
+      out.push(`<li>${inline((ul || ol)[1])}</li>`);
+    }
+    else if (!l.trim()) { flushPara(); closeList(); }
+    else { closeList(); para.push(inline(l)); }
+  }
+  flushPara(); closeList();
+  return out.join("");
+}
+
+// ---- chat (saved on the server, so a refresh keeps the conversation) ----
+const $log = document.getElementById("log"), $input = document.getElementById("input"),
+      $send = document.getElementById("send"), $form = document.getElementById("form");
+const history = [];
+let SESSION = "";   // the chat you are in: "chat:<id>", a new one for every topic
+let TODAY = "", viewingPast = false;
+
+function addMsg(role, text) {
+  const d = document.createElement("div");
+  d.className = "msg " + role;
+  if (role === "assistant") d.innerHTML = md(text); else d.textContent = text;
+  $log.appendChild(d);
+  $log.scrollTop = $log.scrollHeight;
+  return d;
+}
+function contextForApi() {   // the API wants the conversation to start with a user turn; keep it bounded
+  const m = history.slice(-30);
+  while (m.length && m[0].role !== "user") m.shift();
+  return m;
+}
+
+async function sendMessage(text, extra = {}) {
+  if (!text || viewingPast) return;
+  if (listening) stopListening(false);            // you sent it yourself: stop dictating, do not send twice
+  $send.disabled = true;
+  speaker.stopAll();
+  history.push({ role: "user", content: text });
+  addMsg("user", text);
+  const el = addMsg("assistant", "…");
+  let reply = "";
+  try {
+    const r = await fetch("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ messages: contextForApi(), timeframe: tf, session: SESSION, ...extra }),
+    });
+    if (!r.ok) throw new Error((await r.json()).detail || r.statusText);
+    const reader = r.body.getReader(), dec = new TextDecoder(), parse = makeStreamParser();
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      for (const seg of parse(dec.decode(value, { stream: true }))) {
+        if (seg.event) { speaker.event(seg.event); continue; }   // a drawing: applied in step with the speech
+        reply += seg.text;
+        el.innerHTML = md(reply.replace(/```[\s\S]*?(```|$)/g, "").replace(/<\/?[a-z_]+(\s[^>]*)?>/gi, "").replace(/<\|[^\n]*?(>|\n|$)/g, "").replace(/[*`_]*\b(annotate_chart|focus_setup|show_chart|clear_annotations|set_market_phase|get_candles|get_levels)\s*\([^)]*\)[*`_]*/g, ""));
+        $log.scrollTop = $log.scrollHeight;
+        speaker.push(seg.text);
+      }
+    }
+    speaker.finish();
+    history.push({ role: "assistant", content: reply });
+    refreshChats();
+    loadNotes();    // the assistant may have saved a note
+    loadMarked();   // ...or marked a level
+    loadRecommendation(); loadReversals();   // ...or added one of your own setups
+  } catch (err) {
+    el.textContent = "Error: " + err.message;
+    history.pop(); // drop the unanswered user turn so history stays alternating
+  } finally {
+    $send.disabled = false;
+    $input.focus();
+    speaker.whenIdle(() => { if (document.getElementById("handsfree").checked) startListening(); });   // hands-free: listen again
+  }
+}
+$form.addEventListener("submit", (e) => { e.preventDefault(); const t = $input.value.trim(); $input.value = ""; sendMessage(t); });
+$input.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); $form.requestSubmit(); }
+});
+
+// ---- tabs ----
+function showTab(name) {
+  document.querySelectorAll(".tab-btn").forEach(b => b.classList.toggle("active", b.dataset.tab === name));
+  document.querySelectorAll(".tab").forEach(t => { t.hidden = t.id !== "tab-" + name; });
+  if (name === "history") loadHistory();
+  if (name === "notes") loadNotes();
+}
+document.querySelectorAll(".tab-btn").forEach(b => b.onclick = () => showTab(b.dataset.tab));
+async function askAbout(id) { showTab("chat"); await newChat(); sendMessage(`Let's go through setup ${id} together, one step at a time. The chart is already on the first step. Tell me briefly what you see there, and ask me what I see before we go to the next step.`, { focus_setup: id }); }
+document.getElementById("rec-list").addEventListener("click", (e) => { const b = e.target.closest(".why"); if (b) askAbout(b.dataset.id); });
+
+// ---- history of every setup ----
+const SHORT = { "daily|hold": "1H candle · Daily hold", "weekly|hold": "1H candle · Weekly hold", "monthly|hold": "1H candle · Monthly hold", "manual|manual": "Your setup", "weekly|level-reversal": "4H CPLOC · Weekly level", "weekly|level-hold": "4H candle · Weekly level", "monthly|level-reversal": "Daily CPLOC · Monthly level", "monthly|level-hold": "Daily candle · Monthly level", "fvg|1h": "1H FVG rejection", "fvg|4h": "4H FVG rejection", "fvg|1d": "Daily FVG rejection", "fvg|15m": "15M CPLOC at an FVG", "daily|reversal": "1H CPLOC", "daily|early": "15M CPLOC · early", "daily|continuation": "15M CPLOC · cont.",
+                "weekly|reversal": "1H CPLOC · Weekly", "monthly|reversal": "1H CPLOC · Monthly", "monthly|early": "15M CPLOC · Monthly early", "weekly|early": "15M CPLOC · Weekly early" };
+var fmtFull = (t) => t ? new Date(t * 1000).toLocaleString("en-GB", { timeZone: "UTC", weekday: "short", day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: false }) : "–";   // feed clock, e.g. "Mon, 19 Oct 2026, 14:00"
+const fmtT = (t) => t ? new Date(t * 1000).toISOString().slice(5, 16).replace("T", " ") : "–";
+const escH = (t) => String(t).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+const $hList = document.getElementById("h-list");
+const rfmt = (v, d = 1) => (v > 0 ? "+" : v < 0 ? "−" : "") + Math.abs(v).toFixed(d) + "R";
+const pct = (v) => v == null ? "–" : Math.round(v * 100) + "%";
+function curveSvg(curve) {
+  if (curve.length < 2) return '<div class="muted">The curve appears once there are two finished trades.</div>';
+  const W = 330, H = 78, pad = 4;
+  const ts = curve.map(c => c.time), t0 = Math.min(...ts), t1 = Math.max(...ts) || t0 + 1;
+  const vals = [0, ...curve.map(c => c.r)], lo = Math.min(...vals), hi = Math.max(...vals), span = hi - lo || 1;
+  const x = (t) => pad + (W - 2 * pad) * ((t - t0) / ((t1 - t0) || 1)), y = (v) => H - pad - (H - 2 * pad) * ((v - lo) / span);
+  const pts = [[t0, 0], ...curve.map(c => [c.time, c.r])].map(([t, v]) => `${x(t).toFixed(1)},${y(v).toFixed(1)}`).join(" ");
+  const last = curve[curve.length - 1].r, col = last >= 0 ? "var(--up)" : "var(--down)";
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" style="display:block;margin:6px 0 2px">
+    <line x1="${pad}" x2="${W - pad}" y1="${y(0)}" y2="${y(0)}" stroke="var(--border)" stroke-dasharray="3 3"/>
+    <polyline points="${pts}" fill="none" stroke="${col}" stroke-width="1.6"/>
+    <text x="${W - pad}" y="${y(last) - 4}" fill="${col}" font-size="10" text-anchor="end">${rfmt(last)}</text></svg>
+    <div class="muted" style="display:flex;justify-content:space-between"><span>${fmtT(t0)}</span><span>cumulative net R, in the order trades finished</span><span>${fmtT(t1)}</span></div>`;
+}
+async function loadPerformance() {
+  try {
+    const q = new URLSearchParams({ scope: document.getElementById("p-scope").value, days: document.getElementById("p-days").value,
+                                    live_only: document.getElementById("p-live").checked, feed: document.getElementById("p-feed").value });
+    const P = await fetch("/api/history/performance?" + q).then(r => r.json()), T = P.total;
+    const netCls = T.net_r > 0 ? "pos" : T.net_r < 0 ? "neg" : "";
+    const kindRow = (g) => `<tr><td>${escH(g.group)}</td><td>${g.won}</td><td>${g.lost}</td><td>${g.missed}</td><td class="pos">${g.win_r ? "+" + g.win_r.toFixed(1) : "0"}</td><td class="neg">${g.loss_r ? "−" + g.loss_r.toFixed(1) : "0"}</td><td class="${g.net_r > 0 ? "pos" : g.net_r < 0 ? "neg" : ""}">${rfmt(g.net_r)}</td></tr>`;
+    const dayRow = (d) => `<tr><td>${d.day}</td><td>${d.won}</td><td>${d.lost}</td><td>${d.missed}</td><td class="${d.net_r > 0 ? "pos" : d.net_r < 0 ? "neg" : ""}">${rfmt(d.net_r)}</td></tr>`;
+    document.getElementById("h-stats").innerHTML = `
+      <div class="perf-grid">
+        <div class="pc win"><small>Won</small><b>${T.won}</b><i>${T.win_r ? "+" + T.win_r.toFixed(1) + "R" : "0R"}</i></div>
+        <div class="pc loss"><small>Lost</small><b>${T.lost}</b><i>${T.loss_r ? "−" + T.loss_r.toFixed(1) + "R" : "0R"}</i></div>
+        <div class="pc"><small>Missed</small><b>${T.missed}</b><i class="muted">not trades</i></div>
+        <div class="pc"><small>Let go</small><b>${T.skipped || 0}</b><i class="muted">R:R below 1</i></div>
+        <div class="pc"><small>Live</small><b>${T.live}</b><i class="muted">open</i></div>
+      </div>
+      ${document.getElementById("p-feed").value === "all" ? '<div class="perf-small neg">Both feeds are counted together here, so some trades appear twice. Pick one feed for a fair result.</div>' : `<div class="perf-small">Feed: <b>${escH(P.feed)}</b></div>`}
+      <div class="netline">Net <b class="${netCls}">${rfmt(T.net_r)}</b> &nbsp;= ${T.win_r.toFixed(1)}R won − ${T.loss_r.toFixed(1)}R lost over ${T.trades} trades</div>
+      <div class="perf-small">
+        Win rate <b>${pct(T.win_rate)}</b>${T.win_rate_95ci ? ` (95% range ${pct(T.win_rate_95ci[0])}–${pct(T.win_rate_95ci[1])})` : ""} ·
+        avg win <b>${T.avg_win_r ?? "–"}R</b> · avg loss <b>1R</b><br>
+        Expectancy <b class="${T.expectancy_r > 0 ? "pos" : T.expectancy_r < 0 ? "neg" : ""}">${T.expectancy_r == null ? "–" : rfmt(T.expectancy_r, 2)}</b> per trade ·
+        profit factor <b>${T.profit_factor ?? "–"}</b> · needs <b>${pct(T.breakeven_win_rate)}</b> wins to break even · max drawdown <b>${T.max_drawdown_r}R</b>
+        ${T.missed ? `<br>${T.missed} missed (price went to the target without retracing to the entry): ${T.missed_planned_r}R of planned reward not taken.` : ""}
+      </div>
+      ${curveSvg(P.curve)}
+      <details><summary>By kind of setup</summary><table><tr><th>Kind</th><th>Won</th><th>Lost</th><th>Missed</th><th>R won</th><th>R lost</th><th>Net</th></tr>${P.by_kind.map(kindRow).join("")}</table></details>
+      <details><summary>By day (${P.by_day.length})</summary><table><tr><th>Day</th><th>Won</th><th>Lost</th><th>Missed</th><th>Net</th></tr>${P.by_day.map(dayRow).join("")}</table></details>
+      <div class="perf-small" style="margin-top:6px">${P.setups_counted} setups counted: ${P.rebuilt_from_history} rebuilt from history, ${P.watched_live} watched live. ${escH(P.note)}</div>`;
+  } catch { document.getElementById("h-stats").textContent = "Could not load the performance summary."; }
+}
+let openHist = null;   // {id, html}: the row the user opened stays open across the 20 s refresh until they close it or open another
+async function loadHistory() {
+  loadPerformance();
+  try {
+    const q = new URLSearchParams({ state: document.getElementById("h-state").value, limit: "200" });
+    const oc = document.getElementById("h-outcome").value; if (oc) q.set("outcome", oc);
+    const h = await fetch("/api/history?" + q).then(r => r.json());
+    document.getElementById("h-count").textContent = `${h.counts.total} stored · ${h.counts.finished} finished`;
+    $hList.innerHTML = h.setups.map(s => {
+      const res = s.invalid_reason ? ["invalid", "none"] : s.outcome === "target" ? [`+${s.result_r}R`, "target"] : s.outcome === "stopped" ? [`${+(+s.result_r).toFixed(2)}R`, "stopped"]
+        : s.outcome === "missed" ? ["missed", "missed"] : s.outcome === "skipped" ? ["R:R<1 · let go", "missed"] : ["live", "live"];
+      return `<div class="hrow" data-id="${s.id}"><div class="top">
+        <span class="pill ${s.direction === "bull" ? "buy" : "sell"}">${s.direction === "bull" ? "BUY" : "SELL"}</span>
+        <div class="h-main"><b>${SHORT[s.tier + "|" + s.kind]}${s.custom_level ? " ★" : ""}</b><span>${fmtT(s.trigger_time)}${s.backfilled ? " · rebuilt" : ""}</span></div>
+        <span class="res ${res[1]}">${res[0]}</span></div><div class="hdetail" hidden></div></div>`;
+    }).join("") || '<div class="muted">Nothing stored yet.</div>';
+    if (openHist) {
+      const row = [...$hList.querySelectorAll(".hrow")].find(r => r.dataset.id === openHist.id);
+      if (row) { const d = row.querySelector(".hdetail"); d.innerHTML = openHist.html; d.hidden = false; }
+    }
+  } catch {}
+}
+['p-scope', 'p-days', 'p-live', 'p-feed'].forEach(id => document.getElementById(id).addEventListener("change", loadPerformance));
+["h-state", "h-outcome"].forEach(id => document.getElementById(id).addEventListener("change", loadHistory));
+async function markGlitch(id) {
+  const note = prompt("The engine thinks this was hit, but it wasn't on your chart.\nIgnore the candle that decided it and carry on?\n\nNote (optional):", "Feed glitch: price never got there on my chart");
+  if (note === null) return;
+  const r = await fetch("/api/overrides", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ setup_id: id, note }) });
+  const d = await r.json();
+  if (!r.ok) { alert(typeof d.detail === "string" ? d.detail : "Could not correct it."); return; }
+  loadRecommendation(); loadReversals(); loadHistory();
+}
+document.getElementById("rec-list").addEventListener("click", (e) => { const b = e.target.closest(".glitch"); if (b) markGlitch(b.dataset.id); });
+$hList.addEventListener("click", async (e) => {
+  const g = e.target.closest(".glitch"); if (g) { markGlitch(g.dataset.id); return; }
+  if (e.target.closest(".hdetail button")) { askAbout(e.target.closest(".hrow").dataset.id); return; }
+  const row = e.target.closest(".hrow"); if (!row) return;
+  const d = row.querySelector(".hdetail");
+  if (!d.hidden) { d.hidden = true; openHist = null; return; }
+  $hList.querySelectorAll(".hdetail").forEach(x => { x.hidden = true; });   // one open at a time
+  openHist = { id: row.dataset.id, html: "" };
+  d.hidden = false; d.textContent = "Loading…";
+  try {
+    const rec = await fetch("/api/history/" + encodeURIComponent(row.dataset.id)).then(r => r.json());
+    const r = rec.record, p = r.plan;
+    d.innerHTML = `<b>Triggered:</b> ${fmtFull(r.time)}`
+      + (p && p.fill_time ? ` · <b>Entered:</b> ${fmtFull(p.fill_time)}` : "")
+      + ((p && p.resolved_time) || r.resolved_time ? ` · <b>Finished:</b> ${fmtFull((p && p.resolved_time) || r.resolved_time)}` : "")
+      + ` <span class="muted">(feed clock, ${escH(rec.source)})</span><br><b>Why it was identified</b><ul>${r.evidence.why.map(w => `<li>${escH(w)}</li>`).join("")}</ul>`
+      + (p ? `<b>Plan</b> entry ${p.entry} (${p.mode}) · stop ${p.stop} · target ${r.initial_target}${r.target !== r.initial_target ? " → " + r.target : ""} · ${p.rr}R<br>` : "")
+      + (r.target_history.length > 1 ? `<b>Target moved:</b> ${r.target_history.map(h => `${fmtFull(h.time)} ${h.target}`).join(" → ")}<br>` : "")
+      + `<b>Result:</b> ${rec.outcome === "none" ? "still live" : rec.outcome}${rec.invalid_reason ? " · " + escH(rec.invalid_reason) : ""} · feed ${escH(rec.source)}<br>`
+      + `<button>Ask the assistant about this</button>`
+      + ((rec.outcome === "stopped" || rec.outcome === "target") ? ` <button class="glitch" data-id="${rec.id}" title="Ignore the candle that decided this (a feed glitch) and re-judge the setup">not really hit</button>` : "");
+    if (openHist && openHist.id === row.dataset.id) openHist.html = d.innerHTML;
+  } catch { d.textContent = "Could not load."; }
+});
+setInterval(() => { if (!document.getElementById("tab-history").hidden) loadHistory(); }, 20000);
+
+// ---- notes: what the assistant has been taught and what it has noticed ----
+const $nList = document.getElementById("n-list");
+async function loadNotes() {
+  try {
+    const notes = await fetch("/api/notes").then(r => r.json());
+    const sect = (title, items) => items.length ? `<div class="muted" style="margin-top:4px">${title}</div>` + items.map(n => `
+      <div class="note ${n.status}"><div class="meta">${n.kind} · ${n.source === "user" ? "taught by you" : "noticed by the assistant"} · ${n.status}${n.basis && n.basis.n ? ` · n=${n.basis.n}` : ""}${n.basis && n.basis.engine_rule_request ? '<span class="badge" title="This asks the engine to calculate something differently. Saving it does not change the engine; it needs a code change.">not in the engine yet</span>' : ""}</div>
+      ${escH(n.text)}<div class="acts">${n.status === "proposed" ? `<button data-act="confirmed" data-id="${n.id}">Confirm</button><button data-act="rejected" data-id="${n.id}">Reject</button>` : ""}<button data-act="delete" data-id="${n.id}">Delete</button></div></div>`).join("") : "";
+    $nList.innerHTML = sect("Proposed by the assistant (unconfirmed)", notes.filter(n => n.status === "proposed"))
+      + sect("Lessons and confirmed observations (used in every conversation)", notes.filter(n => n.status === "confirmed"))
+      || '<div class="muted">No notes yet. Teach it a rule above, or press "Generate observations" once there are enough finished trades.</div>';
+  } catch {}
+}
+$nList.addEventListener("click", async (e) => {
+  const b = e.target.closest("button[data-act]"); if (!b) return;
+  if (b.dataset.act === "delete") await fetch("/api/notes/" + b.dataset.id, { method: "DELETE" });
+  else await fetch("/api/notes/" + b.dataset.id, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: b.dataset.act }) });
+  loadNotes();
+});
+document.getElementById("n-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const t = document.getElementById("n-text"); if (!t.value.trim()) return;
+  await fetch("/api/notes", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: t.value, kind: "lesson" }) });
+  t.value = ""; loadNotes();
+});
+document.getElementById("n-generate").addEventListener("click", async () => {
+  const msg = document.getElementById("n-msg"), btn = document.getElementById("n-generate");
+  btn.disabled = true; msg.textContent = "Analysing the history…";
+  try {
+    const r = await fetch("/api/notes/generate", { method: "POST" }); const d = await r.json();
+    msg.textContent = !r.ok ? (d.detail || "failed") : d.reason ? d.reason : `${d.created.length} new, ${d.dropped_for_thin_evidence_or_duplicates} dropped (thin evidence or duplicates)`;
+    loadNotes();
+  } catch (e) { msg.textContent = "failed: " + e.message; }
+  btn.disabled = false;
+});
+// ---- marked reference levels (not engine levels): drawn on the chart in their own colour ----
+let markedLines = [];
+const $mList = document.getElementById("m-list");
+async function loadMarked() {
+  try {
+    const list = await fetch("/api/marked-levels").then(r => r.json());
+    markedLines.forEach(l => series.removePriceLine(l)); markedLines = [];
+    for (const m of list) {
+      markedLines.push(series.createPriceLine({ price: m.price, color: "#ff7ab2", lineWidth: 1, lineStyle: LightweightCharts.LineStyle.LargeDashed,
+        axisLabelVisible: true, title: `${m.tf === "1d" ? "D" : m.tf === "1w" ? "W" : "4H"}* ${m.label || "marked"}` }));
+    }
+    $mList.innerHTML = list.map(m => `<div><span>${m.price} · ${m.tf === "1d" ? "D" : m.tf === "1w" ? "W" : "4H"} · ${escH(m.label)}</span><button data-id="${m.id}" title="Remove">✕</button></div>`).join("");
+  } catch {}
+}
+$mList.addEventListener("click", async (e) => { const b = e.target.closest("button[data-id]"); if (b) { await fetch("/api/marked-levels/" + b.dataset.id, { method: "DELETE" }); loadMarked(); } });
+document.getElementById("m-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const price = parseFloat(document.getElementById("m-price").value); if (!price) return;
+  await fetch("/api/marked-levels", { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ price, tf: document.getElementById("m-tf").value, label: document.getElementById("m-label").value }) });
+  document.getElementById("m-price").value = ""; document.getElementById("m-label").value = ""; loadMarked();
+});
+loadMarked();
+setInterval(loadMarked, 20000);
+
+// ---- custom levels: levels the user says exist; the engine uses them ----
+const $cList = document.getElementById("c-list");
+async function loadCustom() {
+  try {
+    const rows = await fetch("/api/custom-levels").then(r => r.json());
+    $cList.innerHTML = rows.map(r => `<div><span>★ ${r.tf === "1d" ? "D" : r.tf === "1w" ? "W" : "4H"} ${r.direction === "buy" ? "▲ buy" : "▼ sell"} <b>${r.price}</b> · since ${fmtT(r.time)}${r.label ? " · " + escH(r.label) : ""}${r.status && r.status.closed_beyond ? ` <span class="muted" title="${escH(r.status.closed_beyond)}">· this feed closed beyond it (still used)</span>` : ""}</span><button data-cid="${r.id}" title="Remove it (and the setups from it)">✕</button></div>`).join("")
+      || '<div class="muted">None yet.</div>';
+  } catch {}
+}
+$cList.addEventListener("click", async (e) => { const b = e.target.closest("button[data-cid]"); if (b) { await fetch("/api/custom-levels/" + b.dataset.cid, { method: "DELETE" }); loadCustom(); loadRecommendation(); loadLevels(); } });
+document.getElementById("c-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const price = parseFloat(document.getElementById("c-price").value); if (!price) return;
+  const body = { price, direction: document.getElementById("c-dir").value, tf: document.getElementById("c-tf").value,
+                 time: document.getElementById("c-since").value.trim() || null, label: document.getElementById("c-label").value.trim() };
+  const r = await fetch("/api/custom-levels", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  if (!r.ok) { alert((await r.json()).detail || "Could not add it."); return; }
+  ["c-price", "c-since", "c-label"].forEach(id => document.getElementById(id).value = "");
+  loadCustom(); loadRecommendation(); loadLevels();
+});
+loadCustom();
+
+// ---- the chat stream carries drawings between control characters (\x1e ... \x1f); split text from events ----
+function makeStreamParser() {
+  let buf = "";
+  return (chunk) => {
+    buf += chunk;
+    const segs = [];
+    while (buf.length) {
+      const a = buf.indexOf("\x1e");
+      if (a === -1) { segs.push({ text: buf }); buf = ""; break; }
+      if (a > 0) segs.push({ text: buf.slice(0, a) });
+      const b = buf.indexOf("\x1f", a);
+      if (b === -1) { buf = buf.slice(a); break; }              // the event is not complete yet: wait for the rest
+      try { segs.push({ event: JSON.parse(buf.slice(a + 1, b)) }); } catch {}
+      buf = buf.slice(b + 1);
+    }
+    return segs;
+  };
+}
+
+// ---- drawings the assistant makes while it explains (lines, zones, markers, trendlines) ----
+class AnnotationsPrimitive {
+  constructor() { this.items = []; this._axis = []; this._pv = { zOrder: () => "top", renderer: () => ({ draw: (t) => this._draw(t) }) }; }
+  attached({ chart, series, requestUpdate }) { this._chart = chart; this._series = series; this._req = requestUpdate; }
+  detached() {}
+  updateAllViews() {}
+  paneViews() { return [this._pv]; }
+  priceAxisViews() { return this._axis; }
+  set(items) {
+    this.items = items;
+    this._axis = items.filter(i => i.type === "hline").map(i => ({
+      coordinate: () => this._series.priceToCoordinate(i.price) ?? -1000,
+      text: () => (i.label && i.label.includes(i.price.toFixed(2))) ? i.label : (i.label ? i.label + " " : "") + i.price.toFixed(2),
+      textColor: () => "#0e1116", backColor: () => i.color, visible: () => true, tickVisible: () => true }));
+    if (this._req) this._req();
+  }
+  _draw(target) {
+    target.useMediaCoordinateSpace(({ context: ctx, mediaSize }) => {
+      const ts = this._chart.timeScale(), W = mediaSize.width;
+      const xAt = (t) => (t == null || !chartCandles.length) ? null : ts.timeToCoordinate(snapToBar(t));
+      const yAt = (p) => this._series.priceToCoordinate(p);
+      const text = (str, x, y, color, align = "left") => {
+        if (!str) return;
+        ctx.font = "600 11px -apple-system, sans-serif"; ctx.textAlign = align;
+        ctx.lineWidth = 3; ctx.strokeStyle = "#0e1116"; ctx.strokeText(str, x, y);   // dark halo keeps it readable over candles
+        ctx.fillStyle = color; ctx.fillText(str, x, y); ctx.textAlign = "left";
+      };
+      const dash = (st) => ctx.setLineDash(st === "solid" ? [] : st === "dotted" ? [2, 3] : [6, 4]);
+      let boxN = 0;
+      for (const it of this.items) {
+        ctx.strokeStyle = it.color; ctx.fillStyle = it.color; ctx.lineWidth = 1.5;
+        if (it.type === "hline") {
+          const y = yAt(it.price); if (y === null) continue;
+          const x0 = it.time_from ? (xAt(it.time_from) ?? 0) : 0;
+          dash(it.style); ctx.beginPath(); ctx.moveTo(Math.max(0, x0), y); ctx.lineTo(W, y); ctx.stroke(); ctx.setLineDash([]);
+          text(it.label, Math.max(x0 + 6, 6), y - 5, it.color);
+        } else if (it.type === "zone") {
+          const y1 = yAt(it.price_to), y2 = yAt(it.price_from); if (y1 === null || y2 === null) continue;
+          const x0 = it.time_from ? (xAt(it.time_from) ?? 0) : 0, x1 = it.time_to ? (xAt(it.time_to) ?? W) : W;
+          ctx.globalAlpha = 0.16; ctx.fillRect(x0, y1, x1 - x0, y2 - y1); ctx.globalAlpha = 0.7; ctx.lineWidth = 1;
+          ctx.strokeRect(x0, y1, x1 - x0, y2 - y1); ctx.globalAlpha = 1;
+          text(it.label, x0 + 6, y1 + 13, it.color);
+        } else if (it.type === "box") {                         // a rectangle around ONE candle, with a label saying what it is
+          const xa = xAt(it.time), xb = xAt(it.time + (it.tf_sec || 3600) - 1), y1 = yAt(it.price_to), y2 = yAt(it.price_from);
+          if (xa === null || xb === null || y1 === null || y2 === null) continue;
+          const pad = (this._chart.timeScale().options().barSpacing || 6) / 2 + 3, x0 = xa - pad, w = Math.max(xb - xa, 0) + 2 * pad;
+          ctx.globalAlpha = 0.13; ctx.fillRect(x0, y1 - 3, w, y2 - y1 + 6); ctx.globalAlpha = 1; ctx.lineWidth = 1.5;
+          ctx.strokeRect(x0, y1 - 3, w, y2 - y1 + 6);
+          const above = (boxN++ % 2) === 0;                    // labels alternate above / below so neighbouring boxes do not overwrite each other
+          text(it.label, Math.min(Math.max(x0 + w / 2, 90), W - 90), above ? y1 - 9 : y2 + 17, it.color, "center");
+        } else if (it.type === "marker") {
+          const x = xAt(it.time), y = yAt(it.price); if (x === null || y === null) continue;
+          const up = it.position !== "below";
+          ctx.beginPath(); ctx.arc(x, y, 4, 0, Math.PI * 2); ctx.fill();
+          ctx.beginPath(); ctx.moveTo(x, y + (up ? -5 : 5)); ctx.lineTo(x, y + (up ? -18 : 18)); ctx.stroke();
+          text(it.label, x, y + (up ? -23 : 29), it.color, "center");
+        } else if (it.type === "trendline") {
+          const x1 = xAt(it.time_from), y1 = yAt(it.price_from), x2 = xAt(it.time_to), y2 = yAt(it.price_to);
+          if ([x1, y1, x2, y2].some(v => v === null)) continue;
+          ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+          text(it.label, (x1 + x2) / 2, (y1 + y2) / 2 - 7, it.color, "center");
+        }
+      }
+    });
+  }
+}
+const fvgLayer = new AnnotationsPrimitive();
+series.attachPrimitive(fvgLayer);
+async function loadFvg() {
+  const on = new Set([...document.querySelectorAll("[data-fvg]")].filter(i => i.checked).map(i => i.dataset.fvg));
+  if (!on.size || !chartCandles.length || focusState) { fvgLayer.set([]); return; }
+  try {
+    const rows = await fetch("/api/fvg").then(r => r.json());
+    fvgLayer.set(rows.filter(z => on.has(z.tf) && TF_SEC[z.tf] >= TF_SEC[tf]
+        && (!focusState || focusState.zones.some(f => Math.abs(f.top - z.top) < 0.02 && Math.abs(f.bottom - z.bottom) < 0.02))).map(z => ({
+      type: "zone", price_from: z.bottom, price_to: z.top, time_from: z.from, time_to: null,
+      label: z.tf.toUpperCase() + " FVG" + (z.flagged ? " ✓" : ""), color: z.bull ? "#26a69a" : "#ef5350" })));
+  } catch {}
+}
+document.querySelectorAll("[data-fvg]").forEach(i => {
+  try { const v = localStorage.getItem("fvg-" + i.dataset.fvg); if (v !== null) i.checked = v === "1"; } catch {}
+  i.addEventListener("change", () => { try { localStorage.setItem("fvg-" + i.dataset.fvg, i.checked ? "1" : "0"); } catch {} loadFvg(); });
+});
+setInterval(loadFvg, 15000);
+const annLayer = new AnnotationsPrimitive();
+series.attachPrimitive(annLayer);
+let annItems = [];
+const $annClear = document.getElementById("ann-clear");
+function setAnn(items) { annItems = items; annLayer.set(items); $annClear.hidden = !items.length; }
+// Focus mode: while the assistant explains one setup, everything that is not about it is hidden from the chart.
+let focusState = null;
+const $focusExit = document.getElementById("focus-exit");
+function nearFocus(price) { return !!focusState && focusState.prices.some(p => Math.abs(p - price) < 0.02); }
+function setFocus(f) {
+  focusState = f; $focusExit.hidden = !f; document.getElementById("focus-steps").hidden = !f;
+  loadLevels(); loadFvg(); loadFRC(); loadReversals(); loadRecommendation();
+}
+document.getElementById("focus-steps").addEventListener("click", (e) => {      // the app moves the chart; the assistant only narrates
+  const b = e.target.closest("button[data-step]"); if (!b || !focusState) return;
+  sendMessage(`Show me the ${b.dataset.step} step and explain what we see.`, { focus_setup: focusState.id, focus_step: b.dataset.step });
+});
+$focusExit.onclick = async () => { await fetch("/api/annotations?session=" + encodeURIComponent(SESSION), { method: "DELETE" }); setAnn([]); setFocus(null); };
+function applyEvent(ev) {
+  if (ev.clear) setAnn([]);
+  else if (ev.annotate) setAnn([...annItems, ...ev.annotate]);
+  else if (ev.view) showView(ev.view);
+  else if (ev.focus) setFocus(ev.focus);
+  else if (ev.focus_off) setFocus(null);
+}
+// The assistant moves the chart: switch timeframe (as if the user pressed the button), then centre on a time.
+async function showView(v) {
+  if (v.timeframe && v.timeframe !== tf) {
+    const b = document.querySelector(`[data-tf="${v.timeframe}"]`); if (!b) return;
+    b.click();
+    for (let i = 0; i < 50 && loadedTf !== v.timeframe; i++) await new Promise(r => setTimeout(r, 100));
+  }
+  if (!chartCandles.length) return;
+  const bars = v.bars || 60;
+  let idx = chartCandles.length - 1;
+  if (v.focus_time) { idx = chartCandles.findIndex(c => c.time > v.focus_time); idx = idx < 0 ? chartCandles.length - 1 : Math.max(0, idx - 1); }
+  const right = v.focus_time ? Math.min(chartCandles.length + 5, idx + Math.round(bars / 2)) : chartCandles.length + 5;
+  chart.timeScale().setVisibleLogicalRange({ from: right - bars, to: right });
+}
+$annClear.onclick = async () => { await fetch("/api/annotations?session=" + encodeURIComponent(SESSION), { method: "DELETE" }); setAnn([]); };
+
+// ---- spoken replies: read the answer aloud AS IT STREAMS, sentence by sentence, drawing in step with the words ----
+const speaker = (() => {
+  const ok = "speechSynthesis" in window;
+  const $btn = document.getElementById("speak"), $sel = document.getElementById("voice-sel"), $stop = document.getElementById("stop-voice");
+  let on = false, voice = null, busy = false, buf = "", idleCb = null, inFence = false;
+  const q = [];
+  try { on = localStorage.getItem("voice") === "1" && ok; } catch {}
+  function clean(t) {
+    t = t.replace(/[*`_]*\b(annotate_chart|focus_setup|show_chart|clear_annotations|set_market_phase|get_candles|get_levels)\s*\([^)]*\)[*`_]*/g, " ").replace(/<\|[^\n]*?(>|\n|$)/g, " ").replace(/<\/?[a-z_]+(\s[^>]*)?>/gi, " ");   // stray tool-call tags are never read aloud
+    if (/^\s*[{\[]/.test(t) && /"\w+"\s*:/.test(t)) return "";   // a stray JSON line
+    return t.replace(/\*\*|__|`/g, "").replace(/^\s*#+\s*/, "").replace(/^\s*[-*•]\s+/, "").replace(/^\s*\d+[.)]\s+/, "")
+      .replace(/\b[a-z]+-[a-z]+-\d+m?-\d{9,}-(bull|bear)\b/g, "that setup").replace(/\|/g, ", ").replace(/[-:]{3,}/g, " ")
+      .replace(/⚠/g, "warning. ").replace(/→/g, " to ").replace(/[▲▼✓✕·]/g, " ")
+      .replace(/\bR:R\b/g, "risk to reward").replace(/(\d)R\b/g, "$1 R").replace(/\bTP\b/g, "take profit").replace(/\bSL\b/g, "stop loss")
+      .replace(/\bCPLOC\b/g, "C P L O C").replace(/\bFRC\b/g, "F R C").replace(/\bHTF\b/g, "higher timeframe").replace(/\bLTF\b/g, "lower timeframe")
+      .replace(/\b4H\b/g, "four hour").replace(/\b1H\b/g, "one hour").replace(/\b15M\b/g, "fifteen minute").replace(/\bXAUUSD\b/g, "gold")
+      .replace(/\s+/g, " ").trim();
+  }
+  function cut(final) {                                      // move complete sentences from the buffer into the queue
+    for (;;) {
+      const m = /[.!?](?=\s)|\n/.exec(buf);
+      let end = m ? m.index + 1 : -1;
+      if (end === -1 && buf.length > 200) { end = buf.lastIndexOf(", ", 180) + 1 || 180; }   // very long run without a full stop
+      if (end === -1) break;
+      const piece = clean(buf.slice(0, end)); buf = buf.slice(end);
+      if (piece) q.push({ say: piece });
+    }
+    if (final) { const piece = clean(buf); buf = ""; if (piece) q.push({ say: piece }); }
+  }
+  let current = null, watchdog = null, keepAlive = null;       // Chrome drops an utterance's end event if nothing holds a reference to it
+  function next() { clearTimeout(watchdog); busy = false; current = null; pump(); }
+  function pump() {
+    if (busy) return;
+    const it = q.shift();
+    if (!it) { clearInterval(keepAlive); keepAlive = null; $stop.hidden = true; if (idleCb) { const f = idleCb; idleCb = null; f(); } return; }
+    if (it.ev) { applyEvent(it.ev); return pump(); }
+    busy = true; $stop.hidden = false;
+    const u = new SpeechSynthesisUtterance(it.say); current = u;
+    if (voice) { u.voice = voice; u.lang = voice.lang; }
+    u.rate = 1.05;
+    u.onend = u.onerror = () => { if (current === u) next(); };
+    // if the browser never reports the end (it sometimes goes silent mid-answer), do not stall: move on after a generous estimate
+    clearTimeout(watchdog); watchdog = setTimeout(() => { if (current === u) { speechSynthesis.cancel(); next(); } }, 3500 + it.say.length * 110);
+    speechSynthesis.speak(u);
+    // Chrome stops speaking a long run from an online voice after ~15 s unless it is nudged
+    if (!keepAlive && voice && !voice.localService) keepAlive = setInterval(() => { if (speechSynthesis.speaking && !speechSynthesis.paused) { speechSynthesis.pause(); speechSynthesis.resume(); } }, 10000);
+  }
+  function loadVoices() {
+    if (!ok) return;
+    const vs = speechSynthesis.getVoices().filter(v => /^en/i.test(v.lang));
+    $sel.innerHTML = vs.map(v => `<option value="${v.voiceURI}">${escH(v.name)} (${v.lang})</option>`).join("");
+    let saved = null; try { saved = localStorage.getItem("voiceURI"); } catch {}
+    voice = vs.find(v => v.voiceURI === saved) || vs.find(v => v.localService && /Samantha|Daniel|Natural|Premium|Enhanced/i.test(v.name))
+      || vs.find(v => v.localService) || vs.find(v => /Google/i.test(v.name)) || vs[0] || null;
+    if (voice) $sel.value = voice.voiceURI;
+  }
+  function paint() { $btn.textContent = on ? "🔊 Voice on" : "🔈 Voice off"; $btn.classList.toggle("on", on); $sel.hidden = !on || !$sel.options.length; }
+  const api = {
+    push(text) {                                            // code blocks / JSON are never read aloud
+      if (!on) return;
+      text.split("```").forEach((part, i) => { if (i > 0) inFence = !inFence; if (!inFence) buf += part; });
+      cut(false); pump();
+    },
+    event(ev) { if (!on) return applyEvent(ev); q.push({ ev }); pump(); },     // with voice on, it is drawn when its turn in the speech comes
+    finish() { if (on) { cut(true); pump(); } },
+    stopAll() {
+      if (ok) speechSynthesis.cancel();
+      for (const it of q) if (it.ev) applyEvent(it.ev);                          // never lose a drawing just because speech was cut
+      clearTimeout(watchdog); clearInterval(keepAlive); keepAlive = null; current = null;
+      q.length = 0; buf = ""; busy = false; idleCb = null; $stop.hidden = true;
+    },
+    whenIdle(cb) { if (!busy && !q.length) cb(); else idleCb = cb; },
+  };
+  $btn.onclick = () => {
+    if (!ok) { $btn.textContent = "no speech in this browser"; return; }
+    on = !on; try { localStorage.setItem("voice", on ? "1" : "0"); } catch {}
+    if (!on) api.stopAll(); paint();
+  };
+  $sel.onchange = () => { voice = speechSynthesis.getVoices().find(v => v.voiceURI === $sel.value) || voice; try { localStorage.setItem("voiceURI", $sel.value); } catch {} };
+  $stop.onclick = () => api.stopAll();
+  if (ok) { loadVoices(); speechSynthesis.onvoiceschanged = () => { loadVoices(); paint(); }; }
+  paint();
+  window.addEventListener("beforeunload", () => { if (ok) speechSynthesis.cancel(); });
+  return api;
+})();
+
+// ---- microphone: talk instead of typing (the browser's speech recognition) ----
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+const $mic = document.getElementById("mic"), $auto = document.getElementById("autosend"), $hands = document.getElementById("handsfree");
+let recog = null, listening = false, stopListening = () => {};
+try { $auto.checked = localStorage.getItem("autosend") !== "0"; $hands.checked = localStorage.getItem("handsfree") === "1"; } catch {}
+$auto.onchange = () => { try { localStorage.setItem("autosend", $auto.checked ? "1" : "0"); } catch {} };
+$hands.onchange = () => { try { localStorage.setItem("handsfree", $hands.checked ? "1" : "0"); } catch {} if ($hands.checked) $auto.checked = true; };
+if (!SR) { $mic.disabled = true; $mic.textContent = "🎤 n/a"; $mic.title = "This browser has no speech recognition. Chrome, Edge and Safari do."; }
+function startListening() {
+  if (!SR || listening || $send.disabled) return;
+  speaker.stopAll();                                        // do not listen to the assistant's own voice
+  let carry = "", cur = "", stopping = false, submitOnEnd = true, done = false, startedAt = 0, quickEnds = 0;
+  const joined = () => (carry + " " + cur).replace(/\s+/g, " ").trim();
+  const finalise = () => {                                  // the one place a dictation ends
+    if (done) return; done = true; listening = false; $mic.classList.remove("listening");
+    if ($mic.textContent !== "🎤 blocked") $mic.textContent = "🎤 Talk";
+    if (submitOnEnd) {                                      // stopped with the mic button: keep the words, and send them if auto-send is on
+      const text = joined(); if (text) $input.value = text;
+      if (text && $auto.checked) $form.requestSubmit();
+    }
+  };
+  const stopNow = (submit = true) => { submitOnEnd = submit; stopping = true; try { recog.stop(); } catch { finalise(); } };
+  const begin = () => {
+    cur = ""; startedAt = Date.now();
+    recog = new SR();
+    recog.lang = navigator.language || "en-US"; recog.interimResults = true; recog.continuous = true;
+    recog.onresult = (e) => {                                // everything heard so far in this run, shown live in the box
+      cur = ""; for (let i = 0; i < e.results.length; i++) cur += e.results[i][0].transcript + " ";
+      $input.value = joined();
+    };
+    recog.onerror = (e) => {
+      if (e.error === "not-allowed" || e.error === "service-not-allowed") { $mic.textContent = "🎤 blocked"; stopping = true; submitOnEnd = false; }
+      else if (e.error !== "no-speech" && e.error !== "aborted") $mic.title = "Microphone: " + e.error;
+    };
+    recog.onend = () => {
+      carry = joined(); cur = "";                            // what this run heard is now part of the saved text
+      if (stopping || done) { finalise(); return; }
+      // The browser ends a session by itself now and then (a pause, a time limit, the network). Carry straight on, keeping the words.
+      // Only if it dies again and again immediately (no microphone, permission problem) give up instead of looping.
+      quickEnds = Date.now() - startedAt < 1000 ? quickEnds + 1 : 0;
+      if (quickEnds >= 4) { $mic.title = "The microphone keeps stopping straight away: check that it is allowed and not in use."; submitOnEnd = false; finalise(); return; }
+      setTimeout(() => { if (!stopping && !done) { try { begin(); } catch { finalise(); } } }, 120);
+    };
+    recog.start();
+  };
+  stopListening = stopNow;                                   // so the mic button (and Send) can end it for real
+  listening = true; $mic.classList.add("listening"); $mic.textContent = "🎤 Listening… press to stop";
+  try { begin(); } catch { finalise(); }
+}
+$mic.onclick = () => { if (listening) stopListening(true); else startListening(); };
+
+// ---- your own setups ----
+document.getElementById("my-setup-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const v = (id) => document.getElementById(id).value.trim(), num = (id) => (v(id) === "" ? null : parseFloat(v(id))), msg = document.getElementById("ms-msg");
+  const r = await fetch("/api/my-setups", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
+    direction: v("ms-dir"), entry: num("ms-entry"), stop: num("ms-stop"), target: num("ms-target"), trigger_timeframe: v("ms-tf"),
+    trigger_time: v("ms-time") || null, origin: num("ms-origin"), label: v("ms-label") }) });
+  const d = await r.json();
+  if (!r.ok) { msg.textContent = typeof d.detail === "string" ? d.detail : "check the numbers"; return; }
+  msg.textContent = "Added."; e.target.reset(); document.getElementById("my-form").open = false;
+  loadRecommendation(); loadReversals();
+});
+document.getElementById("rec-list").addEventListener("click", async (e) => {
+  const b = e.target.closest(".rm"); if (!b) return;
+  await fetch("/api/my-setups/" + b.dataset.manual, { method: "DELETE" }); loadRecommendation(); loadReversals();
+});
+
+// ---- every topic is its own chat: a new chat starts clean and only that chat is ever sent to the assistant ----
+const $daySel = document.getElementById("day-sel"), $chatNew = document.getElementById("chat-new");
+const newChatId = () => "chat:" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+const chatWhen = (t) => new Date(t * 1000).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+async function refreshChats() {
+  try {
+    const chats = await fetch("/api/chat/list").then(r => r.json());
+    const have = new Set(chats.map(c => c.session)), list = [...chats];
+    if (SESSION && !have.has(SESSION)) list.unshift({ session: SESSION, title: "New chat", messages: 0, last: Date.now() / 1000 });
+    $daySel.innerHTML = list.map(c => `<option value="${c.session}">${escH(c.title)}${c.messages ? " · " + c.messages + " msgs" : ""} · ${chatWhen(c.last)}</option>`).join("");
+    $daySel.value = SESSION;
+  } catch {}
+}
+async function openChat(session, fresh) {
+  speaker.stopAll(); SESSION = session; viewingPast = false;
+  history.length = 0; $log.innerHTML = "";
+  if (!fresh) {
+    try {
+      const msgs = await fetch("/api/chat/history?session=" + encodeURIComponent(session)).then(r => r.json());
+      for (const m of msgs) { history.push({ role: m.role, content: m.content }); addMsg(m.role, m.content); }
+    } catch {}
+  }
+  if (!$log.children.length) $log.innerHTML = '<div class="hint">A new chat. Nothing from your other chats is carried into it, only what the assistant has learned (your lessons and notes). Ask about a setup, or press "why?" on one.</div>';
+  for (const el of [$input, $send, $mic]) el.disabled = (el === $mic && !SR);
+  $input.placeholder = "Type, or press the microphone and talk…";
+  try { setFocus(null); } catch {}
+  if (fresh) setAnn([]); else { try { setAnn(await fetch("/api/annotations?session=" + encodeURIComponent(session)).then(r => r.json())); } catch { setAnn([]); } }
+  await refreshChats();
+}
+async function newChat() { await openChat(newChatId(), true); $input.focus(); }
+$chatNew.onclick = newChat;
+$daySel.onchange = () => openChat($daySel.value, false);
+(async function initChats() {
+  SESSION = newChatId();            // the page always opens on a clean chat; earlier chats are in the picker
+  await openChat(SESSION, true);
+})();
+
+loadNotes();
+{ const t = new URLSearchParams(location.search).get("tab"); if (t) showTab(t); }
+</script>
+</body>
+</html>
