@@ -1,113 +1,126 @@
-# Gold Trading Assistant
+# Gold Trading Partner
 
-Browser app: XAUUSD candlestick chart on the left, LLM chat on the right. Discussion only, no trade execution.
+A personal research tool for trading gold (XAUUSD): a **deterministic rules engine** finds trade setups on a live price chart, and an **LLM assistant explains them step by step on the chart**, using only numbers the engine computed.
 
-## Run
+It never places a trade. It exists to turn a discretionary trading strategy into explicit, testable rules, and to make every decision the engine takes (or refuses to take) inspectable.
 
-```
-python3 -m venv .venv && .venv/bin/pip install -r backend/requirements.txt
-cp .env.example .env        # then put your ANTHROPIC_API_KEY in .env
-.venv/bin/uvicorn backend.app.main:app --port 8000
-```
+![Overview: chart with levels, FVG zones and setups on the left, assistant on the right](docs/screenshots/1-overview.png)
 
-Open http://localhost:8000
+## What it does
 
-## Layout
+- **Finds setups from written rules.** Support/resistance "levels" from higher-timeframe candle closes, CPLOC reversal candles, and Fair Value Gap (FVG) continuation trades, across Daily, Weekly and Monthly tiers. Each setup gets an entry, a stop, a target and a tracked outcome in R multiples.
+- **Explains why.** The assistant walks through a setup one step at a time (the level, the trigger candle, the plan), moves the chart to the right timeframe and draws each thing on it as it is mentioned.
+- **Logs every decision.** For each candidate the engine looked at, it records whether it was **taken, let go, or dropped, and the reason** (for example: a Monthly breaker block left no target, a higher-timeframe FVG setup was running the other way, the level had been busted).
+- **Backtests its own rules.** Setups are stored with their results; the History tab reports win rate (with a 95% range), expectancy, profit factor, drawdown and an equity curve, per kind of setup.
+- **Compares rule variants.** The Deep-dive tab studies one rule at a time (currently the Monthly level hold) and lists every trade with an engine-written explanation, side by side across variants of the exit rule.
+- **Runs on the broker's data.** A small MetaTrader 5 Expert Advisor streams the exact candles and ticks from the broker, so the app sees what the trader's own chart sees.
 
-- `backend/app/data.py`: fetches and validates candles (Yahoo `GC=F` for now), computes the snapshot (last close, ATR14, SMA20, recent candles) that is given to the LLM.
-- `backend/app/llm.py`: system prompt and streaming chat. The LLM only sees numbers computed in `data.py`.
-- `backend/app/main.py`: FastAPI routes (`/api/candles`, `/api/chat`) and static frontend.
-- `frontend/index.html`: chart (lightweight-charts) + chat panel.
+## Screenshots
 
-## Known limits
-
-- `GC=F` is COMEX gold futures, not spot XAUUSD, and Yahoo data is delayed. Fine for prototyping; swap `get_candles` for a broker feed later.
-- Chat history lives in the browser tab and is lost on refresh.
-
-## MT5 data feed (matches your MT5 chart exactly)
-
-The app can use your MT5 broker's candles and ticks instead of Twelve Data. MT5 has no public data API,
-so an Expert Advisor inside the MT5 desktop terminal pushes the data to this app.
-
-1. Install the MetaTrader 5 desktop app (macOS or Windows) and log in to your broker. Web terminals cannot run EAs.
-2. In MT5: File > Open Data Folder > MQL5 > Experts, copy `mt5/TradingAssistantFeed.mq5` there, open it in MetaEditor (F4) and compile (F7).
-3. In MT5: Tools > Options > Expert Advisors > tick "Allow WebRequest for listed URL" and add `http://127.0.0.1:8000`.
-4. Open an XAUUSD chart (any timeframe), drag the EA onto it, make sure Algo Trading is on.
-5. The app switches to MT5 automatically; the status line shows "MT5 <symbol>". Times are broker server time, like your MT5 chart.
-
-Optional: set `MT5_SECRET` in `.env` and the same value in the EA's `Secret` input. `DATA_SOURCE=twelvedata` ignores MT5; `DELETE /api/mt5` forgets what the EA sent.
-
-## History, notes and the assistant's memory
-
-- Every setup the engine identifies is stored permanently in `data/assistant.db` (SQLite): the evidence behind it, the plan,
-  every target change and the result. A row is frozen once its outcome is final. Back this file up; it is the history.
-  The server saves new setups every 30 seconds. Setups found when the server first sees them already finished are tagged
-  "rebuilt" (reconstructed from candles, not watched live).
-- Chat tab: ask why a setup was identified (or press **why?** on a live setup). The assistant looks the setup up and explains
-  from the stored evidence. The conversation is saved per browser.
-- History tab: every stored setup with its result, plus win rate / average R with a 95% range per kind.
-- Notes tab: lessons you teach it (always followed) and observations it proposes from the statistics (unconfirmed until you
-  confirm them). "Generate observations" analyses the history; it needs at least 20 finished trades.
-- The model is not retrained. It "learns" through these saved notes, which are put in front of it in every conversation.
-
-## Your own setups, voice and drawings
-
-- **Your own setups**: the card shows engine setups only. If you take a trade the engine did not flag (for example off a level from
-  another provider), press "＋ Add my own setup" on the card, or tell the assistant. It is then tracked like any other setup
-  (dynamic target, stop, outcome), shown on the chart and stored in the history as "Your setup". It never changes the headline,
-  which follows the engine. A setup is only shown while the same data feed is active that its trigger time was recorded on.
-- **Talk to it**: 🎤 Talk uses your browser's speech recognition (Chrome, Edge and Safari; Chrome sends the audio to Google).
-  "auto-send" sends when you stop talking; "hands-free" starts listening again after the assistant finishes.
-- **Hear it**: 🔈 Voice reads the answer aloud as it streams, sentence by sentence, using your browser's built-in voices (pick one
-  in the dropdown). ■ Stop cuts it off.
-- **Drawings**: while it explains, the assistant draws lines, zones, markers and trendlines on the chart, each right after the
-  sentence that mentions it (and in step with the speech when voice is on). They are saved per chat session; "Clear drawings"
-  removes them.
-
-## One chat per trading day, corrections, dictation
-
-- **One chat per trading day.** The day is the date on the data feed's clock, so it rolls over when the chart's day does. A new day
-  starts an empty chat; the day picker above the card opens earlier days read-only ("Back to today" returns). Lessons and notes carry
-  over. The assistant can also read earlier days itself (`get_chat_day`). Drawings are saved with the day they were made on.
-- **"not really hit"** (on a finished trade in the card or the History tab): use it when the feed showed a wick that did not happen on
-  your own chart and the engine stopped or filled a trade because of it. The engine then ignores that candle (and earlier ones) for
-  that one setup and carries on; a real later hit still counts. Undo with `DELETE /api/overrides/<setup id>`. The assistant can do it
-  too (`ignore_feed_glitch`). It is per setup, not a global fix of the feed.
-- **Dictation** listens until YOU stop it: press 🎤 to start and press it again to stop. There is no silence timer. If the browser
-  ends a session by itself it restarts at once and keeps your words; the text appears live in the box. "send when I stop" sends it
-  when you press the button (turn it off to edit the text first). Pressing Send/Enter yourself also stops it.
-
-## The three-timeframe level hold ("hold" kind)
-
-For any level the engine looks at three timeframes: **Monthly** level: Monthly / Weekly / Daily. **Weekly** level: Weekly / Daily / 4H.
-**Daily** level: Daily / 4H / 1H. Price hits the level (it came down to it for a buy, up to it for a sell, within the last 3 candles of
-the confirmation timeframe); a confirmation level on the next timeframe sits at the same price or beyond it (within one ATR of that
-timeframe); then a candle on the third timeframe closes over that confirmation level in the reversal direction: the first close beyond
-it, a bullish candle for a buy, bearish for a sell. It does **not** have to be a CPLOC. Target = next valid level of the first
-timeframe; entry and stop work as for every other setup. It is an extra kind next to the CPLOC kinds, so the History panel shows each
-kind's results separately.
-
-Monthly levels need monthly candles. Twelve Data supplies them. For MT5, **recompile and re-attach the EA** (it now also sends MN1);
-until then the Monthly tier simply finds nothing and everything else keeps working.
-
-## Level polarity: what each close is a level FOR
-
-What a close is a level for depends on what price did **right after it**, i.e. on the candle that **followed** the level candle:
-
-| Level candle → next candle | The level is for |
+| | |
 |---|---|
-| Bullish → Bearish | **Selling** |
-| Bearish → Bullish | **Buying** |
-| Bullish → Bullish | **Buying** |
-| Bearish → Bearish | **Selling** |
+| ![History](docs/screenshots/2-history.png) **History**: every stored setup and its result, with performance statistics and the engine's reason on each row. | ![Decisions](docs/screenshots/3-decisions.png) **Decisions**: every candidate for a chosen day, taken or dropped, with the engine's own reason. |
+| ![Deep-dive](docs/screenshots/4-deep-dive.png) **Deep-dive**: one rule studied trade by trade, with variants compared. | ![Walkthrough](docs/screenshots/5-walkthrough-level.png) **Walkthrough**: the assistant moves the chart to the Monthly timeframe and boxes the candle that made the level. |
+| ![Plan step](docs/screenshots/6-walkthrough-plan.png) **Plan step**: entry, stop, target and how the trade ended, drawn on the chart. | |
 
-So: the next candle went up = a buying level (support), it went down = a selling level (resistance); the level candle's own colour does not
-matter, and a doji after it serves both. That is also why the close just before the running candle is not a level yet: the candle after it
-has not finished. A buy can only START at a buying level (the level price hits, and its confirmation level), a sell only at a selling one.
-Targets are the next valid level of any kind. The chart labels levels ▲ (buying) and ▼ (selling), and the assistant is told never to call a
-buying level resistance or a selling level support.
+## How it is built
 
-`LEVEL_POLARITY` in `.env`: `origin` (default: the rule above), `on` (also restricts targets: a buy aims at a selling level, a sell at a
-buying level), `target` (targets only), `off` (every close alike, the old behaviour). Every rule change is stored as a **rules version**:
-results made under older rules are moved to `setups_archive` (kept, labelled) and the live history is rebuilt, so win rates never mix two
-rule sets.
+```mermaid
+flowchart LR
+    MT5["MetaTrader 5 EA<br/>(MQL5)"] -- candles + ticks --> API
+    TD["Twelve Data / Yahoo<br/>(fallback)"] --> API
+    subgraph Backend["FastAPI backend"]
+        API["data layer<br/>validation, direction tagging"] --> ENG["rules engine<br/>levels, CPLOC, FVG, plans"]
+        ENG --> STORE[("SQLite<br/>setups, results, notes")]
+        ENG --> LOG["decision log"]
+        ENG --> STUDY["deep-dive studies"]
+        ENG --> FOCUS["walkthrough builder<br/>drawings + engine-written sentences"]
+        FOCUS --> LLM["LLM layer<br/>Anthropic / Ollama / OpenRouter"]
+    end
+    Backend -- REST + WebSocket --> UI["Browser UI<br/>lightweight-charts + chat"]
+```
+
+**Stack:** Python, FastAPI, uvicorn, SQLite, WebSockets, vanilla JavaScript with TradingView's `lightweight-charts` (custom series primitives for the drawings), MQL5 for the data feed, and a pluggable LLM backend (Anthropic API, a local model through Ollama, or OpenRouter).
+
+### Design decisions worth knowing about
+
+- **The LLM never decides anything.** Levels, signals, entries, stops, targets and results come from deterministic Python. The model is given the relevant facts for the step being discussed and told to use only those numbers. For the Deep-dive trades the app goes further and says the engine's own sentences word for word, with no model in between, because a small local model would still invent details.
+- **Everything is explainable.** Every setup stores its evidence; every dropped candidate stores its reason. "Why wasn't this trade taken?" is answered from the log, not by guessing.
+- **No hindsight.** Levels, targets and blocking rules are evaluated as they stood at each candle's close, so history can be replayed honestly.
+- **Rules are versioned.** When a rule changes, the engine bumps a rules version; results made under the old rules are archived and the history is rebuilt, so statistics never mix two rule sets.
+- **Rule changes are measured before they are switched on.** `test_wickfix.py` runs the whole engine with and without a change (in separate processes, behind environment switches) and compares setups added, setups removed, win rate and net R. A change that made results worse (letting a candle close back inside a gap without cancelling the setup) was tested and left out.
+- **The rules are written down in plain English** in [`RULES.md`](RULES.md), next to the code that applies them. Rules that are agreed but not yet implemented live in [`PENDING_RULES.md`](PENDING_RULES.md), tagged R101, R102, and so on.
+- **Fast enough to iterate on.** The full engine (about 1,400 setups over several years of 1H, 4H, Daily, Weekly and Monthly candles) rebuilds in a few seconds; higher-timeframe FVG legs are precomputed instead of rescanned per setup.
+
+## The strategy, in short
+
+The full rules are in [`RULES.md`](RULES.md). In outline:
+
+1. **Levels** are higher-timeframe candle closes. A close is a *buying* level if the next candle went up, a *selling* level if it went down; a level is broken once a later candle closes beyond it.
+2. **Signals** are a CPLOC candle (a candle that reaches the previous candle's body and closes beyond it) across a level, or a candle that closes beyond a lower-timeframe level inside the higher-timeframe candle's range. Monthly levels use Daily candles, Weekly levels 4H, Daily levels 1H.
+3. **FVG trades** are trend continuations: a gap formed in the direction of the trend is tapped and rejected on its own timeframe, and the target is the peak the pullback came from.
+4. **Blocking:** a trade is not taken while a higher-timeframe FVG setup is running the other way, and a level that fails (an opposite CPLOC takes the stop) is abandoned.
+5. **Plans** are an entry, a stop, a target and an R:R judged once at the start; below 1 the trade is let go.
+
+## Run it
+
+```bash
+python3 -m venv .venv && .venv/bin/pip install -r backend/requirements.txt
+cp .env.example .env          # add an LLM key, or point it at a local Ollama model
+python run.py                 # http://localhost:8000  (restarts itself when code changes)
+python run.py restart         # stop whatever is on the port, then start
+```
+
+Choose the model in `.env`:
+
+```
+LLM_PROVIDER=anthropic         # or: ollama (local, e.g. gpt-oss:20b) | openrouter
+ANTHROPIC_API_KEY=...          # only for anthropic
+```
+
+API keys stay in `.env`, which is git-ignored.
+
+### Live broker data (MetaTrader 5)
+
+MT5 has no public data API, so an Expert Advisor inside the desktop terminal pushes candles (5m up to monthly) and ticks to the app.
+
+1. Copy `mt5/TradingAssistantFeed.mq5` to MT5's `MQL5/Experts` folder, open it in MetaEditor and compile.
+2. In MT5: Tools, Options, Expert Advisors: allow WebRequest for `http://127.0.0.1:8000`.
+3. Attach the EA to an XAUUSD chart. The app switches to the MT5 feed by itself.
+
+Without MT5 the app falls back to Twelve Data (needs `TWELVE_DATA_API_KEY`) or Yahoo.
+
+## Repository layout
+
+```
+backend/app/
+  reversals.py      the rules engine: level tiers, CPLOC signals, FVG trades, plans, decision log
+  fvg.py            fair value gaps: zones, unfilled part, rejections, higher-timeframe legs and blocking
+  levels.py         level validity, polarity, user-marked levels
+  frc_levels.py     CPLOC candles that cross a valid level
+  patterns.py       CPLOC and break-of-structure detection (follows indicator.pine)
+  study.py          Deep-dive studies: variants of one rule, every trade explained
+  recommendation.py live headline (buy / sell / no trade) and the trade list
+  assistant.py      tools for the LLM and the step-by-step chart walkthrough builder
+  llm.py            provider-agnostic streaming chat, prompt, prompt caching
+  store.py          SQLite: setups, results, performance, notes, chat sessions
+  data.py, mt5.py, ticks.py   candle and tick feeds
+  main.py           FastAPI routes, chat orchestration
+frontend/index.html chart, tabs, drawing layer, speech
+mt5/                MQL5 Expert Advisor
+indicator.pine      the TradingView indicator the FVG and BOS logic follows
+RULES.md            the rules in plain English
+```
+
+## Honest limits
+
+- **Results are in-sample and before costs.** The rules were refined against the same history they are measured on, with no spread, slippage or commission. The History tab says so; treat the numbers as a development aid, not a forecast.
+- **Single user, local.** No authentication, one SQLite file.
+- **Not financial advice.** The tool never executes trades and is not a recommendation to trade.
+- **Known data issue:** the MT5 server builds 4H candles on its own clock, which is two hours off a UTC-aligned chart. 1H and higher timeframes match.
+
+## What I would do next
+
+- Rebuild the 4H candles from 1H data on a UTC-aligned clock so every timeframe matches the chart exactly.
+- Hold out part of the history for out-of-sample checks of each rule change.
+- Add an automated test suite around the level, CPLOC and FVG functions (today they are checked by replaying known dates and by `test_wickfix.py`).

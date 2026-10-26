@@ -6,6 +6,7 @@ Learning here means memory, not retraining: the model's weights never change. It
 and both are put in front of it in every conversation (memory_block).
 """
 import datetime as dt
+from bisect import bisect_left
 import json
 import os
 import re
@@ -28,6 +29,17 @@ TOOLS = [
             "and final result. Use this before explaining why a setup was identified or how it ended. Ids look like "
             "'daily-early-15m-1792409400-bull' and appear in the live list and in find_setups results."),
         "input_schema": {"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]},
+    },
+    {
+        "name": "get_decisions",
+        "description": (
+            "The engine's decision log: every candidate it looked at on a day (a CPLOC on a level, a candle closing beyond a level, an FVG tap that rejected), "
+            "TAKEN, LET GO (R:R below 1) or DROPPED, each with the engine's own reason. Use it whenever the user asks why a trade was or was not taken, or why a "
+            "candle was not used. If the candle is not in the list, the engine saw no signal there."),
+        "input_schema": {"type": "object", "properties": {
+            "day": {"type": "string", "description": "YYYY-MM-DD on the feed clock"},
+            "time": {"type": "string", "description": "optional: only candidates within 3 hours of this time, 'YYYY-MM-DD HH:MM' on the feed clock"},
+            "direction": {"type": "string", "enum": ["bull", "bear"]}}, "required": ["day"]},
     },
     {
         "name": "find_setups",
@@ -432,7 +444,7 @@ def focus_events(setup_id: str, step: str, session: str) -> dict:
     if step == "done":
         store.clear_annotations(session)
         return {"events": [{"clear": True}, {"focus_off": True}], "shown": "the normal chart is back"}
-    rec = store.get_setup(setup_id)
+    rec = get_setup_any(setup_id)
     if not rec:
         return {"error": f"no setup {setup_id!r}"}
     r = rec["record"]
@@ -468,7 +480,8 @@ def focus_events(setup_id: str, step: str, session: str) -> dict:
             view_tf = z["tf"] if z else view_tf
             focus_t, bars = (z["formed"] if z else focus_t), 70
         else:
-            view_tf = r["level_tf"] if r["level_tf"] in ("1w", "1d", "4h") else "1d"
+            lv_tf = ev.get("hit_level_tf") or r["level_tf"]
+            view_tf = lv_tf if lv_tf in ("1mo", "1w", "1d", "4h") else "1d"          # the level's OWN chart: a Monthly level is shown on the Monthly chart
             oc = ev.get("origin_candle") or {}
             focus_t = oc.get("time") or r["time"]
             bars = 40
@@ -502,7 +515,7 @@ def focus_events(setup_id: str, step: str, session: str) -> dict:
         if plan.get("fill_time"):
             items.append({"type": "marker", "time": plan["fill_time"], "price": plan["entry"], "position": "below" if bull else "above", "color": blue, "label": "entry filled"})
         if plan.get("resolved_time"):
-            res_price = plan["stop"] if plan.get("outcome") == "stopped" else plan["target"]
+            res_price = plan["stop"] if plan.get("outcome") == "stopped" else plan.get("exit_price") or plan["target"]
             items.append({"type": "marker", "time": plan["resolved_time"], "price": res_price, "position": "above" if bull else "below",
                           "color": red if plan.get("outcome") == "stopped" else green, "label": str(plan.get("outcome") or "")})
     f = r.get("fvg")
@@ -556,7 +569,9 @@ def focus_events(setup_id: str, step: str, session: str) -> dict:
                 cs, k = cnd(tf_h, close=ev.get("hit_level", r.get("origin")), before=r["time"])
             if cs is not None:
                 lvl, nxt = cs[k], (cs[k + 1] if k + 1 < len(cs) else None)
-                kind_word = {"buy": "buying", "sell": "selling"}.get(oc.get("polarity"), "")
+                if step == "level" and tf_h == view_tf:
+                    focus_t = lvl["time"]                        # centre the chart on the candle that made the level
+                kind_word = {"buy": "buying", "sell": "selling"}.get(oc.get("polarity"), "") or ("buying" if bull else "selling")
                 boxes.append(box(tf_h, lvl, f"the {TF_NAME_[tf_h]} candle whose close {lvl['close']} is the level", blue))
                 facts_candles["level_candle"] = {"timeframe": TF_NAME_[tf_h], "time": _t(lvl["time"]), "open": lvl["open"], "high": lvl["high"], "low": lvl["low"], "close": lvl["close"]}
                 if nxt:
@@ -609,6 +624,14 @@ def focus_events(setup_id: str, step: str, session: str) -> dict:
         return {"time": _t(c["time"]), "open": c["open"], "high": c["high"], "low": c["low"], "close": c["close"]}
     facts: dict = {"setup": setup_id, "candles_boxed_on_the_chart": facts_candles, "direction": "BUY" if bull else "SELL", "kind_rule": (ev.get("why") or [""])[0]}
     facts["chart_timeframe"] = TF_NAME_.get(view_tf, view_tf)
+    # WHY the engine took / let go / dropped it, in its own words (the decision log): the model quotes this, it never works the reason out itself.
+    if r.get("study_decision"):                                   # a Deep-dive setup: its own version's decision and explanation
+        facts["engine_decision"] = r["study_decision"]
+        st = (ev.get("study_steps") or {})
+        facts["engine_explanation__say_this"] = (st.get("level", []) + st.get("trigger", []) + st.get("plan", [])) if step == "all" else st.get(step) or st.get("plan")
+        facts["version"] = setup_id.split("-")[2].upper() if setup_id.count("-") > 2 else None
+    else:
+        facts["engine_decision"], facts["other_candidates_that_day"] = _decisions_for(setup_id, r["time"])
     if step == "level":
         # Only what is on THIS chart: a Daily-chart step says nothing about a 4H level, a 1H candle or any lower-timeframe move. Those come in the step that moves there.
         facts.pop("kind_rule", None)
@@ -633,6 +656,97 @@ def focus_events(setup_id: str, step: str, session: str) -> dict:
     return {"events": [{"clear": True}, {"focus": focus}, {"view": {"timeframe": view_tf, "focus_time": focus_t, "bars": bars}}, {"stage": staged}],
             "facts_for_this_step__use_only_these_numbers": facts,
             "shown": f"step '{step}': chart on {view_tf}, everything unrelated hidden; drawn: " + ", ".join(sorted({it.get('label') or it['type'] for it in items}))[:400]}
+
+
+def get_setup_any(setup_id: str) -> dict | None:
+    """A stored setup, or a Deep-dive setup (ids "study-..."), in the stored shape."""
+    if setup_id.startswith("study-"):
+        from . import study
+        return study.record(setup_id)
+    return store.get_setup(setup_id)
+
+
+def focus_view(setup_id: str, tf: str) -> dict | None:
+    """The user asked for a timeframe while a setup is being explained: where to put that chart, and the facts about what is on it.
+    The level's own timeframe: the candle that made the level. The timeframe of the level the trigger crossed: the candle that made that level.
+    Any other: the candle of that timeframe that contains the trigger."""
+    rec = get_setup_any(setup_id)
+    if not rec:
+        return None
+    r = rec["record"]
+    ev = r.get("evidence") or {}
+    cs = data.try_candles(tf) or []
+    if not cs:
+        return None
+    times = [c["time"] for c in cs]
+
+    def ohlc(c: dict) -> dict:
+        return {"time": _t(c["time"]), "open": c["open"], "high": c["high"], "low": c["low"], "close": c["close"]}
+
+    facts: dict = {"chart_now_on_screen": TF_NAME_.get(tf, tf)}
+    draw: list[dict] = []
+    SECS = {"15m": 900, "1h": 3600, "4h": 14400, "1d": 86400, "1w": 604800, "1mo": 2678400}
+
+    def box(c: dict, label: str, color: str) -> dict:
+        return {"type": "box", "time": c["time"], "tf_sec": SECS[tf], "price_from": c["low"], "price_to": c["high"], "label": label, "color": color}
+    t = r["time"]
+    lv_tf, lv = ev.get("hit_level_tf") or r["level_tf"], ev.get("hit_level", r.get("origin"))
+    ll = ev.get("lower_level") or {}
+    if tf == lv_tf and lv is not None:
+        k = [i for i, c in enumerate(cs) if abs(c["close"] - lv) < 0.006 and c["time"] < r["time"]]
+        if k:
+            c = cs[k[-1]]
+            t = c["time"]
+            facts["the_candle_that_made_the_level"] = {**ohlc(c), "its_close_is_the_level": lv}
+            nm = TF_NAME_.get(tf, tf)
+            say = f"This is the {nm} candle of {_t(c['time'])[:10]}: it closed at {lv}, and that close is the {nm} level."
+            if k[-1] + 1 < len(cs):
+                n = cs[k[-1] + 1]
+                facts["the_candle_after_it"] = ohlc(n)
+                say += f" The next {nm} candle closed {'up' if n['close'] > lv else 'down'} at {n['close']}, so it is a {'buying' if n['close'] > lv else 'selling'} level."
+            facts["in_plain_words"] = say
+            draw += [{"type": "hline", "price": lv, "label": f"{nm} level", "color": "#4aa3e0", "style": "dashed"},
+                     box(c, f"the {nm} candle whose close {lv} is the level", "#4aa3e0")]
+    elif ll.get("tf") == tf and ll.get("time"):
+        i = bisect_left(times, ll["time"])
+        if i < len(cs):
+            c = cs[i]
+            t = c["time"]
+            nm, big, trg = TF_NAME_.get(tf, tf), TF_NAME_.get(lv_tf, lv_tf), TF_NAME_.get(r["trigger_tf"], r["trigger_tf"])
+            tc = ev.get("trigger") or {}
+            facts[f"the_{nm.lower()}_level"] = {"price": ll["price"], "made_by_the_close_of_the_candle": ohlc(c)}
+            facts["in_plain_words"] = (f"This is the {nm} chart. The {nm} level {ll['price']} is the close of the {nm} candle of {_t(c['time'])[:10]}. It lies inside the range "
+                                       f"of the {big} candle that made the {big} level {lv} (from {lv} to its {'low' if r['direction'] == 'bull' else 'high'} "
+                                       f"{ev.get('range_extreme')}). The {trg} candle of {_t(r['time'])[:10]} crossed this {nm} level and closed "
+                                       f"{'above' if r['direction'] == 'bull' else 'below'} it at {tc.get('close')}: that is the entry.")
+            draw += [{"type": "hline", "price": ll["price"], "label": f"{nm} level crossed", "color": "#e0b84a", "style": "dashed"},
+                     box(c, f"the {nm} candle whose close {ll['price']} is the level", "#e0b84a")]
+    else:
+        i = max(0, bisect_left(times, r["time"] + 1) - 1)
+        t = cs[i]["time"]
+        facts["the_candle_containing_the_trigger"] = ohlc(cs[i])
+        facts["in_plain_words"] = f"This is the {TF_NAME_.get(tf, tf)} chart, on the candle of {_t(cs[i]['time'])[:10]} that contains the entry."
+        draw.append(box(cs[i], "contains the entry", "#ffffff"))
+    return {"view": {"timeframe": tf, "focus_time": t, "bars": 40 if tf in ("1mo", "1w") else 60}, "facts": facts, "draw": normalise_annotations(draw)}
+
+
+def _decisions_for(setup_id: str, t: int) -> tuple[dict | None, list[dict]]:
+    """The decision log entry of this setup, and the other candidates of the same day (taken or dropped, with the reason)."""
+    from . import reversals
+    try:
+        rows = reversals.decisions()
+    except Exception:
+        return None, []
+    mine = next((d for d in rows if d.get("id") == setup_id), None)
+    day0 = t - t % 86400
+    others = [_decision_row(d) for d in rows if day0 <= d["time"] < day0 + 86400 and d.get("id") != setup_id][:30]
+    return (_decision_row(mine) if mine else None), others
+
+
+def _decision_row(d: dict) -> dict:
+    from . import recommendation
+    return {"time": _t(d["time"]), "what": recommendation.SHORT_LABEL.get((d["tier"], d["kind"]), d["kind"]), "direction": "BUY" if d["direction"] == "bull" else "SELL",
+            "level": d.get("level"), "signal": d.get("what"), "decision": d["decision"], "reason": d["reason"], "id": d.get("id")}
 
 
 def cues_for(it: dict) -> list[str]:
@@ -698,6 +812,15 @@ async def run_tool(name: str, args: dict, ctx: dict | None = None) -> str:
                 plan=r.get("plan"), target_history=r.get("target_history"), stop=r.get("stop"),
                 invalid=r.get("invalid"), final_status=r["status"])
             return json.dumps(_with_times(slim))[:14000]
+        if name == "get_decisions":
+            from . import reversals
+            day0 = int(dt.datetime.strptime(args["day"], "%Y-%m-%d").replace(tzinfo=dt.UTC).timestamp())
+            rows = [d for d in reversals.decisions() if day0 <= d["time"] < day0 + 86400 and (not args.get("direction") or d["direction"] == args["direction"])]
+            if args.get("time"):
+                t0 = int(dt.datetime.strptime(args["time"], "%Y-%m-%d %H:%M").replace(tzinfo=dt.UTC).timestamp())
+                rows = [d for d in rows if abs(d["time"] - t0) <= 3 * 3600]
+            return json.dumps({"decisions": [_decision_row(d) for d in rows][:60],
+                               "note": "the engine's own reasons; quote them, do not work out your own"})[:14000]
         if name == "find_setups":
             rows = store.list_setups(args.get("state", "all"), args.get("kind"), args.get("tier"), args.get("direction"),
                                      args.get("outcome"), min(int(args.get("limit", 15)), 40))

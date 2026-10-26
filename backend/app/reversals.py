@@ -1,63 +1,4 @@
-"""Reversal setups. Price moves from level to level; each tier is the same idea one step up.
-
-DAILY tier - targets the nearest valid DAILY level beyond the trigger candle's close, in its direction
-(judged at the time of the trigger, no hindsight):
-
-  reversal      1H CPLOC (FRC) crossing a valid Daily level. The main signal.
-  early         15M CPLOC crossing a valid 4H level, AFTER price has hit a Daily level, where the 4H level
-                is at that Daily level or beyond it. An early warning of the reversal the 1H CPLOC would
-                show, and a more refined entry.
-  continuation  15M CPLOC crossing a valid 4H level, in the direction of a 1H reversal that is still
-                pending, after a 1H Break of Structure (indicator definition) in that direction: price is
-                pulling back to retest before reaching its Daily target.
-
-WEEKLY tier - targets the nearest valid WEEKLY level beyond the trigger candle's close:
-
-  reversal      4H CPLOC crossing a valid Daily level, AFTER price has hit a Weekly level, where the Daily
-                level is at that Weekly level or beyond it.
-  early         the same, but with a 1H CPLOC.
-
-"Hit" = a wick reaching the level; it must be the most recent valid higher-tier level price touched.
-Bearish: price arrived at that level from below and the lower-tier level is at/above it; bullish: price
-arrived from above and the lower-tier level is at/below it. "Beyond" is limited to EARLY_REACH_ATR x the
-ATR(14) of the lower tier's level timeframe, so the signal stays near the higher-tier level.
-
-HTF CONFLICT (a warning, never a discard): while a Weekly setup is pending, a Daily-tier setup in the OPPOSITE
-direction may have a target that passes the Weekly trade's ENTRY (or its STOP). That is flagged in `htf_conflict`
-but the setup stays valid and pending: levels keep forming, so its target usually moves to a nearer level before it
-matters (see dynamic targets). Only the Weekly trade's entry and stop are used, not the Weekly level it started from.
-
-DYNAMIC TARGETS: levels keep being created while a trade runs (every completed higher-timeframe candle
-close can become a level). So the target is re-evaluated on every candle, using only the levels that exist
-at that moment (no hindsight): the nearest valid level beyond the current price, never behind the trigger's
-close, its origin level or the entry. A newly created level between price and the old target replaces it;
-one beyond the target changes nothing; one behind price is ignored. A setup / plan completes when price
-touches the target AS IT STOOD at that candle. `initial_target` is the target at trigger time and
-`target_history` records every change.
-
-STOP / TRADE PLAN (the trigger candle is the ENTRY candle, on its own timeframe):
-- stop:   bullish: the lowest low of the trigger candle and the two candles before it; bearish: the highest
-          high of those three. (The trigger candle's own extreme alone gets hunted, so the extreme that
-          created it is used.)
-- range:  the full high-low (wicks included) of the two candles before the trigger candle.
-- entry:  if the trigger closes INSIDE that range, enter at its close. If it closes beyond it (a bearish
-          one below, a bullish one above), wait for price to retrace back to the range of the second
-          candle before the trigger (its near edge), and enter there.
-- target: the setup's (dynamic) target: next Daily level, or next Weekly level for the Weekly tier.
-- An unfilled retrace entry is "missed" if price reaches the target before it fills.
-- After the fill, a candle that reaches both stop and target counts as stopped (pessimistic); the fill
-  candle itself is only checked for the stop, since the order inside it is unknown.
-
-Status, checked candle by candle on the trigger's own timeframe after the trigger candle (running candle
-included):
-- failed:    price breaks the STOP first (bull: low < stop, bear: high > stop)
-- completed: price touches the target (a wick is enough)
-- pending:   neither yet
-If one candle does both it counts as failed (order inside a candle is unknown: pessimistic reading).
-
-A same-tier, same-kind, same-direction trigger with the same target while a setup is still unresolved is a
-repeat of that setup and is not reported again.
-"""
+"""The setup engine. THE RULES ARE WRITTEN OUT IN PLAIN ENGLISH IN RULES.md (repo root): this file applies them. Keep the two in step."""
 import json
 import os
 import threading
@@ -67,7 +8,7 @@ from bisect import bisect_left, bisect_right
 from . import data, frc_levels, fvg, patterns, store
 from . import levels as levelsmod
 
-RULES_VERSION = 44       # bump when the rules change: the stored results of the old rules are archived and rebuilt (see store.ensure_rules_version)
+RULES_VERSION = 50       # bump when the rules change: the stored results of the old rules are archived and rebuilt (see store.ensure_rules_version)
 MIN_RR = 1.0   # a plan paying less than this is shown but not taken (not flagged as a trade, not counted in the results)
 EARLY_REACH_ATR = 1.0   # how far beyond the higher-tier level the lower-tier level may sit, in ATRs
 HOLD_WINDOWS = 3        # the three-timeframe hold: price must have come down/up to the higher level within this many confirmation-level candles
@@ -204,7 +145,8 @@ def _bb_closes(origin: float, bull: bool, t: int, tf: str = "1d") -> tuple[set[f
     """The closes of a BREAKER BLOCK formation on the `tf` chart (Daily, Weekly or Monthly), when the level `origin` is one.
 
     A BB level is the close of candle 1. For a sell: candle 1 is bullish, candle 2 is a bearish CPLOC that closes below candle 1's body (it breaks the
-    level), and candle 3 retests the level (its high reaches it) and closes back below it, leaving a wick. A buy is the mirror image. A setup taken on
+    level), and candle 3 retests the level (its high reaches it) and closes back below it, leaving a wick. Candle 3 must be a COMPLETED candle of `tf`: the
+    BB is only valid once it has rejected price on its own timeframe (a retest still in progress inside the running candle does not count). A buy is the mirror image. A setup taken on
     that formation must not target candle 2's close (or any other close inside the formation): price is expected to run through them to the next level
     beyond. Half the trade is closed at candle 2's close and the rest runs on. Judged as of `t` (when the trigger candle closed): no later knowledge.
     Returns (the closes of candle 1, 2, 3 and the candles between, candle 2's close), or (empty set, None) when `origin` is not a BB level."""
@@ -243,8 +185,7 @@ def _bb_closes(origin: float, bull: bool, t: int, tf: str = "1d") -> tuple[set[f
                         now = part[-1]["close"]
                         if (now <= origin) if bull else (now >= origin):
                             broken = True
-                        retest = retest or ((min(x["low"] for x in part) <= origin) if bull else (max(x["high"] for x in part) >= origin))
-                    break
+                    break                                           # the running candle cannot be the rejection: the BB must first reject price on its own timeframe
             if retest and not broken:
                 out = ({round(x, 2) for x in closes}, round(c2["close"], 2))
     if len(_BB_CACHE) > 20000:
@@ -392,16 +333,60 @@ def _dup(setups: list[dict], built: dict) -> bool:
     """The same trade again: a setup in the same direction, with the same FINAL target (after every adjustment), whose earlier twin is still running when this
     one triggers. _is_repeat is checked before a setup is built, with the target as first worked out, which the build often changes (a breaker block's skip,
     an FVG cap, a Daily FVG leg), so it missed these: the 21:00 Daily hold on Aug 13 was the 19:00 one again."""
-    return any(s["direction"] == built["direction"] and s["initial_target"] == built["initial_target"] and s["tier"] == built["tier"] and s["kind"] == built["kind"]
-               and s["trigger_tf"] == built["trigger_tf"] and (s["resolved_time"] is None or s["resolved_time"] > built["time"]) for s in setups)
+    return next((s for s in setups if s["direction"] == built["direction"] and s["initial_target"] == built["initial_target"] and s["tier"] == built["tier"]
+                 and s["kind"] == built["kind"] and s["trigger_tf"] == built["trigger_tf"] and (s["resolved_time"] is None or s["resolved_time"] > built["time"])), None)
 
 
-def _is_repeat(setups: list[dict], direction: str, target: float, time: int) -> bool:
-    return any(
-        s["direction"] == direction and s["initial_target"] == target
-        and (s["resolved_time"] is None or s["resolved_time"] > time)
-        for s in setups
-    )
+def _is_repeat(setups: list[dict], direction: str, target: float, time: int, tf: str | None = None) -> dict | None:
+    """A still-running twin: same direction, same target. Different timeframe, different trade: with `tf`, only a twin on that trigger timeframe counts."""
+    return next((
+        s for s in setups
+        if s["direction"] == direction and s["initial_target"] == target and (tf is None or s["trigger_tf"] == tf)
+        and (s["resolved_time"] is None or s["resolved_time"] > time)), None)
+
+
+# ---- the DECISION LOG: every candidate the engine looked at, taken or dropped, with the reason (shown in the app's Decisions view) ----
+_LOG: list | None = None        # filled while _find_uncached runs
+_WHY: list = [None]             # why the last _build returned None
+_DECISIONS: list = []           # the log of the last completed build
+
+
+def _meta(tier: str, kind: str, trigger_tf: str, t: int, direction: str, level: float | None = None, level_tf: str | None = None, **extra) -> dict:
+    return {"tier": tier, "kind": kind, "trigger_tf": trigger_tf, "time": t, "direction": direction, "level": level, "level_tf": level_tf, **extra}
+
+
+def _drop(meta: dict, reason: str) -> None:
+    if _LOG is not None:
+        _LOG.append({**meta, "decision": "dropped", "reason": reason})
+
+
+def _pre(out: list[dict], meta: dict, target: float | None, what: str, tf: str | None = None) -> bool:
+    """The checks before a setup is built: a target exists, and it is not a repeat of a twin still running."""
+    if target is None:
+        _drop(meta, f"no valid {what} beyond the close to aim for")
+        return False
+    tw = _is_repeat(out, meta["direction"], target, meta["time"], tf)
+    if tw:
+        _drop(meta, f"a repeat of {tw['id']}: same direction and target ({target}), and that one was still running")
+        return False
+    return True
+
+
+def _add(out: list[dict], built: dict | None, meta: dict) -> None:
+    if built is None:
+        _drop(meta, _WHY[0] or "no valid plan")
+        _WHY[0] = None
+        return
+    tw = _dup(out, built)
+    if tw:
+        _drop({**meta, "id": built["id"]}, f"a repeat of {tw['id']}: same direction and final target ({built['initial_target']}), and that one was still running")
+        return
+    out.append(built)
+
+
+def _fail(reason: str) -> None:
+    _WHY[0] = reason
+    return None
 
 
 def _plan(candles: list[dict], i: int, bull: bool, target0: float, stop: float, floor: float, tf_sec: int,
@@ -643,7 +628,7 @@ def _build(tier: str, kind: str, trigger_tf: str, level_tf: str, candles: list[d
            direction: str, origin: float, target0: float, book: LevelBook, evidence: dict | None = None,
            manual: dict | None = None, stop_override: float | None = None) -> dict | None:
     if i < 2:
-        return None  # the entry check needs two candles before the trigger
+        return _fail("fewer than two candles before the trigger")  # the entry check needs two candles before the trigger
     bull = direction == "bull"
     c, p1, p2 = candles[i], candles[i - 1], candles[i - 2]
     if kind == "level-hold" and not manual and stop_override is None:
@@ -667,8 +652,9 @@ def _build(tier: str, kind: str, trigger_tf: str, level_tf: str, candles: list[d
         if bb:
             book = _SkipBook(book, bb)
             target0 = book.next(c["time"], max(c["close"], origin) if bull else min(c["close"], origin), bull)
-            if target0 is None:
-                return None                                     # no level beyond the formation to aim for
+            if target0 is None:                                 # no level beyond the formation to aim for
+                return _fail(f"the level {origin} is a breaker block: every close inside the formation ({len(bb)} closes, {min(bb)} to {max(bb)}) is skipped "
+                             f"as a target, and no valid level beyond them was left")
             bb_target = target0
     leg = None
     if not manual and tier == "daily" and not bb:
@@ -678,8 +664,9 @@ def _build(tier: str, kind: str, trigger_tf: str, level_tf: str, candles: list[d
         if leg:
             target0 = leg["target"]
             book = _FixedBook(book, target0)
-    if not manual and tier != "fvg" and fvg.opposing_signal(c["time"] + TF_SEC[trigger_tf], bull, c["close"], TF_SEC[trigger_tf]):
-        return None            # a bounce against a higher-timeframe FVG rejection and its trend: valid as a bounce, never a trade of this plan
+    blocked = None if manual or tier == "fvg" else fvg.opposing_reason(c["time"] + TF_SEC[trigger_tf], bull, c["close"], TF_SEC[trigger_tf])
+    if blocked:
+        return _fail("blocked: " + blocked)            # a bounce against a higher-timeframe FVG rejection and its trend: valid as a bounce, never a trade of this plan
     fvg_info = None
     if not manual and tier != "fvg":
         known = c["time"] + TF_SEC[trigger_tf]                    # the trigger candle's close: what the trader knows at entry
@@ -766,6 +753,25 @@ def _build(tier: str, kind: str, trigger_tf: str, level_tf: str, candles: list[d
     }
 
 
+def _furthest_level(m: list[dict], i: int, bull: bool, levels, hit: list[dict], hit_times: list[int]) -> tuple[float | None, float, float]:
+    """MONTHLY rule: when price runs through several valid levels of the trade's kind, the setup is taken from the FURTHEST one it reached (the lowest buying
+    level for a buy, the highest selling level for a sell). The move is judged on the trigger timeframe from the start of the previous candle of the level's
+    timeframe up to the trigger: its lowest low (buy) / highest high (sell), and the opposite extreme printed before it. Returns (the level or None, move low,
+    move high)."""
+    start = hit[max(0, bisect_right(hit_times, m[i]["time"]) - 2)]["time"]
+    j0 = bisect_left([c["time"] for c in m], start)
+    seg = m[j0:i + 1]
+    if bull:
+        k = min(range(len(seg)), key=lambda q: seg[q]["low"])
+        lo, hi = seg[k]["low"], max(c["high"] for c in seg[:k + 1])
+        crossed = [lv for lv in levels if lo <= lv <= hi]
+        return (min(crossed) if crossed else None), lo, hi
+    k = max(range(len(seg)), key=lambda q: seg[q]["high"])
+    hi, lo = seg[k]["high"], min(c["low"] for c in seg[:k + 1])
+    crossed = [lv for lv in levels if lo <= lv <= hi]
+    return (max(crossed) if crossed else None), lo, hi
+
+
 def _find_level_reversals(tier: str, c_tf: str, level_tf: str) -> list[dict]:
     """Weekly / Monthly level reversal, signal 1: a CPLOC on `c_tf` (4H for Weekly, Daily for Monthly) crosses a valid `level_tf` level and closes beyond it.
     Its own trade: the CPLOC rules for entry and stop, the target the next valid level of `level_tf`. No early signal at this tier."""
@@ -783,12 +789,22 @@ def _find_level_reversals(tier: str, c_tf: str, level_tf: str) -> list[dict]:
         c, bull = ltf[i], f["direction"] == "bull"
         crossed = [l["price"] for l in f["levels"]]
         origin = max(crossed) if bull else min(crossed)
+        meta = _meta(tier, "level-reversal", c_tf, c["time"], f["direction"], origin, level_tf, what=f"{TF_NAME[c_tf]} CPLOC crossed the {TF_NAME[level_tf]} level(s) {crossed}")
+        if tier == "monthly":
+            up, down = book.valid_lists(c["time"])
+            kind_ok = [lv for lv in (down if bull else up) if book.origin_ok(lv, bull)]
+            far, lo, hi = _furthest_level(ltf, i, bull, kind_ok + crossed, htf, [x["time"] for x in htf])
+            if far is not None and all(abs(far - x) > LEVEL_TOL for x in crossed):
+                _drop(meta, f"the move ran {'down' if bull else 'up'} to {lo if bull else hi} through the Monthly {'buying' if bull else 'selling'} level(s) down to {far}: "
+                            f"the setup is taken from the furthest one ({far}), and this CPLOC did not cross it")
+                continue
+            origin = far if far is not None else origin
+            meta["level"] = origin
         target = book.next(c["time"], max(c["close"], origin) if bull else min(c["close"], origin), bull)
-        if target is None or _is_repeat(out, f["direction"], target, f["time"]):
+        if not _pre(out, meta, target, f"{TF_NAME[level_tf]} level (of the opposite kind)"):
             continue
         built = _build(tier, "level-reversal", c_tf, level_tf, ltf, i, f["direction"], origin, target, book, {"rule": "reversal", "levels_crossed": f["levels"]})
-        if built and not _dup(out, built):
-            out.append(built)
+        _add(out, built, meta)
     return out
 
 
@@ -814,12 +830,12 @@ def _find_reversals() -> list[dict]:
         crossed = [l["price"] for l in f["levels"]]
         origin = max(crossed) if bull else min(crossed)
         target = book.next(c["time"], max(c["close"], origin) if bull else min(c["close"], origin), bull)
-        if target is None or _is_repeat(out, f["direction"], target, f["time"]):
+        meta = _meta("daily", "reversal", "1h", c["time"], f["direction"], origin, "1d", what=f"1H CPLOC crossed the Daily level(s) {crossed}")
+        if not _pre(out, meta, target, "Daily level (of the opposite kind)"):
             continue
         built = _build("daily", "reversal", "1h", "1d", ltf, i, f["direction"], origin, target, book,
                        {"rule": "reversal", "levels_crossed": f["levels"]})
-        if built and not _dup(out, built):
-            out.append(built)
+        _add(out, built, meta)
     return out
 
 
@@ -956,7 +972,7 @@ def _upgrade_targets(daily: list[dict]) -> list[dict]:
         book, c = books[tf], cs[i]
         tier = "monthly" if tf == "1mo" else "weekly"
         target = book.next(c["time"], max(c["close"], L) if bull else min(c["close"], L), bull)
-        if target is None or _is_repeat(out, st["direction"], target, t):
+        if target is None or _is_repeat(out, st["direction"], target, t, st["trigger_tf"]):
             continue
         ev = {k: v for k, v in st["evidence"].items() if k not in ("why", "trigger", "prev1", "prev2", "origin_candle", "target_candle", "target_cap",
                                                                    "polarity_origin", "polarity_target")}
@@ -995,11 +1011,22 @@ def _gated_core(tier: str, kind: str, trigger_tf: str, hit_tf: str, reach_tf: st
               if levelsmod.origin_ok(hit[k + 1] if k + 1 < len(hit) else None, bull)]       # a buy starts at a buying level (the candle after it went up), a sell at a selling one
         kof = {hit_closes[k]: k for k in ks}
         levels = set(kof)
+        crossed = [lv["price"] for lv in f["levels"]]
+        meta = _meta(tier, kind, trigger_tf, c["time"], f["direction"], None, hit_tf,
+                     what=f"{TF_NAME[trigger_tf]} {'CPLOC' if extra.get('candle_rule') == 'cploc' else 'candle'} crossed the {TF_NAME[reach_tf]} level(s) {crossed}")
         for cl in book.custom:      # a level the user marked on the hit timeframe is a valid hit level too (for the direction it serves)
             if cl["polarity"] == ("buy" if bull else "sell") and levelsmod.custom_intact(cl, hit, idx_h, c["close"], c["time"]):
                 levels.add(cl["price"])
         if not levels:
+            _drop(meta, f"no valid {TF_NAME[hit_tf]} {'buying' if bull else 'selling'} level to start from")
             continue
+        if tier == "monthly" and hit_tf == "1mo":
+            far, mlo, mhi = _furthest_level(m, i, bull, levels, hit, hit_times)
+            if far is None:
+                _drop(meta, f"the move ({mlo} to {mhi}) did not reach a valid Monthly {'buying' if bull else 'selling'} level")
+                continue
+            levels = {far}                     # the furthest level the move reached is the one the signals are checked at
+            meta["level"] = far
 
         # The 4H level must lie INSIDE the range of the Daily candle that made the level: from its close (the level) out to its low (a buy) / high (a sell).
         # A 4H level outside that range is ignored. (A level the user marked has no candle: one Daily ATR stands in for the range.)
@@ -1017,7 +1044,14 @@ def _gated_core(tier: str, kind: str, trigger_tf: str, hit_tf: str, reach_tf: st
                         "lower_level": {"tf": reach_tf, "price": p, "time": lv["time"]},
                         "distance_beyond": round(p - hl, 2), "range_extreme": round(ext, 2),
                     })
+        if best is None and tier == "monthly" and hit_tf == "1mo":
+            _drop(meta, f"the furthest Monthly {'buying' if bull else 'selling'} level the move reached is {next(iter(levels))}; none of the {TF_NAME[reach_tf]} levels "
+                        f"this candle crossed lies at or beyond it, inside its candle's range")
+            continue
         if best is None:
+            near = sorted(levels, key=lambda x: abs(x - c["close"]))[:3]
+            _drop(meta, f"none of the {TF_NAME[reach_tf]} levels crossed lies inside the range of a valid {TF_NAME[hit_tf]} {'buying' if bull else 'selling'} level's candle "
+                        f"(from its close out to its {'low' if bull else 'high'}); nearest {TF_NAME[hit_tf]} levels: {near}")
             continue
 
         # The target must lie beyond BOTH the CPLOC close and the higher-tier level that was hit: if the
@@ -1025,12 +1059,12 @@ def _gated_core(tier: str, kind: str, trigger_tf: str, hit_tf: str, reach_tf: st
         # itself (a reversal "targeting" its own origin).
         ref = min(c["close"], best[1]) if not bull else max(c["close"], best[1])
         target = book.next(c["time"], ref, bull)
-        if target is None or _is_repeat(out, f["direction"], target, f["time"]):
+        meta["level"] = best[1]
+        if not _pre(out, meta, target, f"{TF_NAME[hit_tf]} level (of the opposite kind)"):
             continue
         built = _build(tier, kind, trigger_tf, hit_tf, m, i, f["direction"], best[1], target, book,
                        {"rule": "gated", **best[3], "levels_crossed": f["levels"], **extra})
-        if built and not _dup(out, built):
-            out.append(built)
+        _add(out, built, meta)
     return out
 
 
@@ -1061,13 +1095,14 @@ def _find_continuations(reversals: list[dict]) -> list[dict]:
             c = m15[i]
             ref = max(c["close"], s["origin"]) if bull else min(c["close"], s["origin"])
             target = book.next(c["time"], ref, bull)
-            if target is None or _is_repeat(out, f["direction"], target, f["time"]):
+            meta = _meta("daily", "continuation", "15m", c["time"], f["direction"], s["origin"], "1d",
+                         what=f"15M CPLOC on the 4H level(s) {[l['price'] for l in f['levels']]} after a 1H BOS, while {s['id']} was running")
+            if not _pre(out, meta, target, "Daily level (of the opposite kind)"):
                 continue
             built = _build("daily", "continuation", "15m", "1d", m15, i, f["direction"], s["origin"], target, book,
                            {"rule": "continuation", "parent_id": s["id"], "parent_time": s["time"],
                             "bos_candle_time": known - 3600, "bos_known_at": known, "levels_crossed": f["levels"]})
-            if built and not _dup(out, built):
-                out.append(built)
+            _add(out, built, meta)
     return out
 
 
@@ -1198,90 +1233,57 @@ def _fvg_target(h1: list[dict], h1_times: list[int], z: dict, end: int, bull: bo
 
 
 def _find_fvg_continuations() -> list[dict]:
-    """A 1H candle taps into an unfilled FVG (1H, 4H or Daily) and CLOSES OUTSIDE it (below a bearish one, above a bullish one), the candle before having
-    closed outside too: the TAP candle. The trend of the FVG continues. The TRIGGER is the first candle of the trend's colour (red for a sell, green for a
-    buy): the tap candle itself when it has that colour, otherwise the next such candle within 3 candles, as long as no candle closes back into the zone in
-    between. Entry at the trigger's close. The STOP is the extreme of the tap candle (its high for a sell, its low for a buy). The target is the low / high
-    of the move that made the FVG. Every tap into the unfilled part that rejects is a setup."""
-    h1 = data.get_candles("1h")
-    times = [c["time"] for c in h1]
+    """An FVG works on its OWN timeframe only: a 1H gap is traded with 1H candles, a 4H gap with 4H candles, a Daily gap with Daily candles. A candle taps
+    into the unfilled part of the gap and the trend of the gap continues. The TRIGGER is the first candle of the trend's colour (red for a sell, green for a
+    buy) that closes beyond the gap: the tap candle itself, or one of the next 3, as long as no candle closes back into the zone in between. Entry at the
+    trigger's close. The STOP is the extreme of the tap (and trigger) candle(s). The target is the peak the pullback came from, on the same timeframe
+    (see _fvg_target). Every tap into the unfilled part that rejects is a setup."""
     book0 = LevelBook(data.get_candles("1d"), "1d")
     out: list[dict] = []
-    last = len(h1) - 1                       # the running candle cannot be a trigger
     for tf in fvg.TFS:
+        cs = data.get_candles(tf)
+        times = [c["time"] for c in cs]
+        last = len(cs) - 1                   # the running candle cannot be a trigger
+        sec = fvg.SEC[tf]
         for z in fvg.zones(tf):
             bull = z["bull"]
             used = -1                                              # candles up to this index belong to a rejection already handled
             for k in range(max(bisect_left(times, z["created"]), 3), last):
-                c = h1[k]
+                c = cs[k]
                 if z["end"] is not None and c["time"] >= z["end"]:
                     break
                 if k <= used:
                     continue
-                g = fvg.find_rejection(z, h1, k, last)             # tap (k) and trigger (k..k+3): see fvg.find_rejection
+                g = fvg.find_rejection(z, cs, k, last)             # tap (k) and trigger (k..k+3): see fvg.find_rejection
                 if g is None:
                     continue                                       # no rejection here; the unfilled part shrinks by the wick and later taps still count
                 used = g
                 zb, zt = fvg.bounds_at(z, c["time"])               # the unfilled part as it stood when the tap candle opened
-                if g is not None and fvg.opposing_signal(h1[g]["time"] + 3600, bull, h1[g]["close"], fvg.SEC[tf]):
-                    g = None                                       # a HIGHER-timeframe FVG signal the other way is in play: not a valid continuation
-                if g is not None:
-                    trig = h1[g]
-                    span = h1[k:g + 1]
-                    stop = min(x["low"] for x in span) if bull else max(x["high"] for x in span)       # the extreme of the tap (and trigger) candle(s)
-                    target = _fvg_target(h1, times, z, k, bull, trig["close"], c["time"])
-                    if target is not None and not _is_repeat(out, "bull" if bull else "bear", target, trig["time"]):
-                        built = _build("fvg", tf, "1h", tf, h1, g, "bull" if bull else "bear", zt if bull else zb, target,
-                                       _FixedBook(book0, target),
-                                       {"rule": "fvg", "tap": {"time": c["time"], "high": c["high"], "low": c["low"], "close": c["close"]},
-                                        "fvg_zone": {"tf": tf, "bull": bull, "top": zt, "bottom": zb, "formed": z["formed"],
-                                                     "original": [z["bottom"], z["top"]], "flagged": fvg.flagged_at(z, trig["time"] + 3600)}}, stop_override=stop)
-                        if built and not _dup(out, built):
-                            out.append(built)
-    return out
-
-
-def _find_fvg_cplocs() -> list[dict]:
-    """The 15M version of a continuation: a 15M CPLOC rejects a valid 4H LEVEL while an unfilled FVG (1H, 4H or Daily) of the same direction is in place
-    where the candle went: a bearish FVG for a sell, a bullish one for a buy. The CPLOC candle pushed into the zone and closed back OUTSIDE it, so the
-    trend (the FVG's direction) continues. The entry is the 15M candle, the stop and entry are the usual rules, the target is the FVG target (see _fvg_target)."""
-    h1 = data.get_candles("1h")
-    h1_times = [c["time"] for c in h1]
-    m15 = data.get_candles("15m")
-    index_of = {c["time"]: i for i, c in enumerate(m15)}
-    book0 = LevelBook(data.get_candles("1d"), "1d")
-    out: list[dict] = []
-    for f in frc_levels.find("15m"):
-        i = index_of.get(f["time"])
-        if i is None:
-            continue
-        c, bull = m15[i], f["direction"] == "bull"
-        known = c["time"] + 900
-        zones = []
-        for z in fvg.active_at(known):
-            if z["bull"] != bull:
-                continue
-            zb, zt = fvg.bounds_at(z, c["time"])               # only the part of the gap price has not already traded through counts
-            if c["high"] >= zb and c["low"] <= zt and ((c["close"] > zt) if bull else (c["close"] < zb)):
-                zones.append({**z, "bottom": zb, "top": zt})
-        if not zones:
-            continue
-        if fvg.opposing_signal(known, bull, c["close"], 900):
-            continue                                                            # a higher-timeframe (1H / 4H / Daily) FVG signal the other way is in play
-        z = max(zones, key=lambda x: TF_SECONDS[x["tf"]])                       # the biggest timeframe among those the candle rejected
-        r = bisect_right(h1_times, c["time"]) - 2                               # the last COMPLETED 1H candle at that moment
-        target = _fvg_target(h1, h1_times, z, r + 1, bull, c["close"], c["time"])
-        if target is None or _is_repeat(out, f["direction"], target, c["time"]):
-            continue
-        lv = f["levels"][0]
-        built = _build("fvg", "15m", "15m", "4h", m15, i, f["direction"], z["top"] if bull else z["bottom"], target, _FixedBook(book0, target),
-                       {"rule": "fvg", "levels_crossed": f["levels"],
-                        "fvg_zone": {"tf": z["tf"], "bull": bull, "top": z["top"], "bottom": z["bottom"], "formed": z["formed"], "flagged": fvg.flagged_at(z, known)}},
-                       stop_override=(c["low"] if bull else c["high"]))        # the CPLOC candle is the tap candle: its own extreme is the stop
-        if built:
-            built["evidence"]["why"].insert(1, f"A 15M CPLOC crossed the valid 4H level {lv['price']} (a {'buying' if bull else 'selling'} level) at the same place: that is a continuation signal, "
-                                               "not a reversal, because an unfilled FVG of the same direction was there.")
-            out.append(built)
+                trig = cs[g]
+                meta = _meta("fvg", tf, tf, trig["time"], "bull" if bull else "bear", zt if bull else zb, tf,
+                             what=f"{TF_NAME[tf]} candle of {_ft(c['time'])} tapped the {TF_NAME[tf]} {'bullish' if bull else 'bearish'} FVG {zb}-{zt}, "
+                                  f"rejected by the {TF_NAME[tf]} candle of {_ft(trig['time'])}")
+                blocked = fvg.opposing_reason(trig["time"] + sec, bull, trig["close"], sec)
+                if blocked:
+                    _drop(meta, "blocked: " + blocked)             # a HIGHER-timeframe FVG signal the other way is in play: not a valid continuation
+                    continue
+                span = cs[k:g + 1]
+                stop = min(x["low"] for x in span) if bull else max(x["high"] for x in span)       # the extreme of the tap (and trigger) candle(s)
+                target = _fvg_target(cs, times, z, k, bull, trig["close"], c["time"])
+                if target is None:
+                    b = fvg.trend_start(z, c["time"])
+                    _drop(meta, f"the {TF_NAME[tf]} trend is not the gap's way: the last {TF_NAME[tf]} break of structure before the tap was "
+                                f"{'bearish' if bull else 'bullish'}" if b is None else
+                                f"no target: the {'highest high' if bull else 'lowest low'} since the {TF_NAME[tf]} break of structure of {_ft(b)} is not beyond the entry {trig['close']}")
+                    continue
+                if not _pre(out, meta, target, "target", tf):
+                    continue
+                built = _build("fvg", tf, tf, tf, cs, g, "bull" if bull else "bear", zt if bull else zb, target,
+                               _FixedBook(book0, target),
+                               {"rule": "fvg", "tap": {"time": c["time"], "high": c["high"], "low": c["low"], "close": c["close"]},
+                                "fvg_zone": {"tf": tf, "bull": bull, "top": zt, "bottom": zb, "formed": z["formed"],
+                                             "original": [z["bottom"], z["top"]], "flagged": fvg.flagged_at(z, trig["time"] + sec)}}, stop_override=stop)
+                _add(out, built, meta)
     return out
 
 
@@ -1337,14 +1339,18 @@ def _apply_busted(setups: list[dict]) -> list[dict]:
             out.append(s)
             continue
         key = round(s["origin"], 2)
-        if key in busted and s["time"] >= busted[key]:
+        if key in busted and s["time"] >= busted[key][0]:
+            _drop(_meta(s["tier"], s["kind"], s["trigger_tf"], s["time"], s["direction"], s["origin"], s["level_tf"], id=s["id"]),
+                  f"the level {s['origin']} was busted on {fvg._ft(busted[key][0] - TF_SEC[s['trigger_tf']])}: {busted[key][1]} was stopped out there by a CPLOC the other way")
             continue
         out.append(s)
         p = s.get("plan")
         if p and p.get("outcome") == "stopped" and p.get("resolved_time"):
             opposite = "bear" if s["direction"] == "bull" else "bull"
             if (p["resolved_time"], opposite) in _cploc_set(s["trigger_tf"]):
-                busted[key] = min(busted.get(key, 10 ** 12), p["resolved_time"] + TF_SEC[s["trigger_tf"]])
+                t_b = p["resolved_time"] + TF_SEC[s["trigger_tf"]]
+                if key not in busted or t_b < busted[key][0]:
+                    busted[key] = (t_b, s["id"])
     return out
 
 
@@ -1359,12 +1365,21 @@ def _one_trade_per_candle(setups: list[dict]) -> list[dict]:
             k = (s["trigger_tf"], s["time"], s["direction"])
             if k not in best or rank[s["tier"]] > rank[best[k]["tier"]]:
                 best[k] = s
-    return [s for s in setups if s["tier"] not in rank or best[(s["trigger_tf"], s["time"], s["direction"])] is s]
+    kept = []
+    for s in setups:
+        b = best.get((s["trigger_tf"], s["time"], s["direction"])) if s["tier"] in rank else None
+        if b is None or b is s:
+            kept.append(s)
+        else:
+            _drop(_meta(s["tier"], s["kind"], s["trigger_tf"], s["time"], s["direction"], s.get("origin"), s.get("level_tf"), id=s["id"]),
+                  f"the same entry candle is the {b['tier'].title()} trade {b['id']}: one trade, with the higher level's target ({b['initial_target']})")
+    return kept
 
 
 def _find_uncached() -> list[dict]:
-    global _OVERRIDES
+    global _OVERRIDES, _LOG, _DECISIONS
     _OVERRIDES = store.get_overrides()
+    _LOG = []
     reversal = _find_reversals()
     # The setup is always the Daily one: 1H CPLOC on a Daily level, Daily level + 4H level + a 1H close beyond it, or the early 15M CPLOC on the 4H level.
     # Weekly and Monthly levels only decide the TARGET: where one is involved the same setup is upgraded to it (see _upgrade_targets).
@@ -1374,7 +1389,6 @@ def _find_uncached() -> list[dict]:
         + _soft(lambda: _upgrade_targets(daily))
         + _find_continuations(reversal)
         + _find_fvg_continuations()
-        + _find_fvg_cplocs()
         + _find_level_reversals("weekly", "4h", "1w") + _find_level_holds("weekly", "4h", "1d", "1w")           # the Weekly level held: a 4H candle shows it
         + _soft(lambda: _find_level_reversals("monthly", "1d", "1mo")) + _soft(lambda: _find_level_holds("monthly", "1d", "1w", "1mo"))   # the Monthly level held: a Daily candle shows it
         + _find_manual()
@@ -1383,5 +1397,28 @@ def _find_uncached() -> list[dict]:
     out = _one_trade_per_candle(out)
     out.sort(key=lambda s: s["time"])
     _apply_weekly_conflicts(out)
+    log = _LOG
+    _LOG = None
+    for s in out:
+        p = s.get("plan")
+        m = _meta(s["tier"], s["kind"], s["trigger_tf"], s["time"], s["direction"], s.get("origin"), s.get("level_tf"), id=s["id"],
+                  what=((s.get("evidence") or {}).get("why") or [None])[0])
+        if s.get("invalid"):
+            log.append({**m, "decision": "dropped", "reason": f"invalid: {s['invalid'].get('reason')}"})
+        elif not p:
+            log.append({**m, "decision": "dropped", "reason": "no valid plan: the stop is on the wrong side of the entry, or the target is already behind it"})
+        elif p.get("status") == "skipped":
+            log.append({**m, "decision": "let go", "reason": f"R:R {p['rr']} is below {MIN_RR:g} (entry {p['entry']}, stop {p['stop']}, target {p['target']})"})
+        else:
+            log.append({**m, "decision": "taken", "reason": f"entry {p['entry']}, stop {p['stop']}, target {s['initial_target']}, R:R {p['rr']}"
+                                                           + (f"; result: {p['outcome']}" if p.get("outcome") else "; still running")})
+    log.sort(key=lambda d: d["time"])
+    _DECISIONS = log
     return out
+
+
+def decisions() -> list[dict]:
+    """Every candidate of the last build, taken or dropped, with the reason, oldest first."""
+    find()
+    return list(_DECISIONS)
 

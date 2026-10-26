@@ -79,9 +79,23 @@
   .pos { color: var(--up); } .neg { color: var(--down); }
   #h-stats { padding: 6px 12px; font-size: 11px; color: var(--muted); border-bottom: 1px solid var(--border); }
   #h-stats table { width: 100%; border-collapse: collapse; } #h-stats td, #h-stats th { padding: 1px 4px; text-align: right; font-weight: 400; } #h-stats td:first-child, #h-stats th:first-child { text-align: left; }
-  #tab-history { overflow-y: auto; }   /* the whole History screen scrolls: filters, performance and list together */
+  #tab-history { overflow-y: auto; }
+  #tab-decisions #d-list { overflow-y: auto; flex: 1; min-height: 0; }
+  #s-body { flex: 1; min-height: 0; overflow-y: auto; padding: 8px 12px; font-size: 12px; }
+  .study h3 { margin: 4px 0 6px; font-size: 14px; } .study h4 { margin: 14px 0 4px; font-size: 13px; }
+  .study table { border-collapse: collapse; width: 100%; margin: 4px 0; } .study td, .study th { border-bottom: 1px solid var(--border); padding: 2px 4px; text-align: right; }
+  .study td:first-child, .study th:first-child { text-align: left; }
+  .study ol { margin: 4px 0; padding-left: 18px; } .study .slist { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
+  .strow .sexp { line-height: 1.45; margin: 4px 0 2px; }
+  .study .vtag { font-size: 11px; font-weight: 600; border: 1px solid var(--border); border-radius: 4px; padding: 0 5px; white-space: nowrap; }
+  .study .strow .top { grid-template-columns: auto auto 1fr auto; } .study .h-main .muted { margin-left: 6px; }
+  .study .sver { display: flex; gap: 6px; margin: 10px 0 2px; } .study .sver button { flex: 1; cursor: pointer; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 3px 0; font: inherit; }
+  .study .sver button.on { border-color: var(--accent); color: var(--accent); font-weight: 600; } .study tr.sel td { font-weight: 600; }
+  .drow { cursor: pointer; }
+  .drow .dwhy, .hrow .dwhy { font-size: 12px; line-height: 1.4; margin-top: 4px; }
+  .drow .dwhy button { margin-left: 4px; font-size: 11px; cursor: pointer; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 0 6px; }   /* the whole History screen scrolls: filters, performance and list together */
   #tab-history > * { flex: none; }
-  #h-list, #n-list { flex: 1; overflow-y: auto; padding: 8px 12px; display: flex; flex-direction: column; gap: 5px; }
+  #h-list, #n-list, #d-list { flex: 1; overflow-y: auto; padding: 8px 12px; display: flex; flex-direction: column; gap: 5px; }
   #tab-history #h-list { overflow: visible; flex: none; }
   .hrow { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; font-size: 12px; cursor: pointer; }
   .hrow .top { display: grid; grid-template-columns: auto 1fr auto; gap: 8px; align-items: center; }
@@ -174,6 +188,8 @@
   <div id="tabs">
     <button class="tab-btn active" data-tab="chat">Chat</button>
     <button class="tab-btn" data-tab="history">History</button>
+    <button class="tab-btn" data-tab="decisions" title="Every candidate the engine looked at: taken or dropped, and why">Decisions</button>
+    <button class="tab-btn" data-tab="study" title="A critical look at one rule at a time: every trade, explained">Deep-dive</button>
     <button class="tab-btn" data-tab="notes">Notes</button>
   </div>
   <div class="tab" id="tab-chat">
@@ -231,6 +247,24 @@
     </div>
     <div id="h-stats"></div>
     <div id="h-list"></div>
+  </div>
+  <div class="tab" id="tab-decisions" hidden>
+    <div class="tab-bar">
+      <input type="date" id="d-day" title="Day (feed clock)">
+      <select id="d-days" title="How many days from that day"><option value="1">1 day</option><option value="3">3 days</option><option value="7">7 days</option></select>
+      <select id="d-decision"><option value="all">Taken + dropped</option><option value="taken">Taken</option><option value="let go">Let go (R:R below 1)</option><option value="dropped">Dropped</option></select>
+      <select id="d-tier"><option value="all">All kinds</option><option value="daily">Daily levels</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option><option value="fvg">FVG</option></select>
+      <select id="d-dir"><option value="all">Buy + sell</option><option value="bull">Buy</option><option value="bear">Sell</option></select>
+      <span id="d-count" class="muted"></span>
+    </div>
+    <div id="d-list"></div>
+  </div>
+  <div class="tab" id="tab-study" hidden>
+    <div class="tab-bar">
+      <select id="s-rule"><option value="monthly">Monthly level hold</option><option disabled>Weekly level hold (next)</option><option disabled>Daily level hold (later)</option></select>
+      <span id="s-msg" class="muted"></span>
+    </div>
+    <div id="s-body"></div>
   </div>
   <div class="tab" id="tab-notes" hidden>
     <div class="tab-bar">
@@ -832,6 +866,8 @@ function showTab(name) {
   document.querySelectorAll(".tab").forEach(t => { t.hidden = t.id !== "tab-" + name; });
   if (name === "history") loadHistory();
   if (name === "notes") loadNotes();
+  if (name === "decisions") loadDecisions();
+  if (name === "study") loadStudy();
 }
 document.querySelectorAll(".tab-btn").forEach(b => b.onclick = () => showTab(b.dataset.tab));
 async function askAbout(id) { showTab("chat"); await newChat(); sendMessage(`Let's go through setup ${id} together, one step at a time. The chart is already on the first step. Tell me briefly what you see there, and ask me what I see before we go to the next step.`, { focus_setup: id }); }
@@ -905,7 +941,7 @@ async function loadHistory() {
       return `<div class="hrow" data-id="${s.id}"><div class="top">
         <span class="pill ${s.direction === "bull" ? "buy" : "sell"}">${s.direction === "bull" ? "BUY" : "SELL"}</span>
         <div class="h-main"><b>${SHORT[s.tier + "|" + s.kind]}${s.custom_level ? " ★" : ""}</b><span>${fmtT(s.trigger_time)}${s.backfilled ? " · rebuilt" : ""}</span></div>
-        <span class="res ${res[1]}">${res[0]}</span></div><div class="hdetail" hidden></div></div>`;
+        <span class="res ${res[1]}">${res[0]}</span></div>${s.decision_reason ? `<div class="dwhy"><b>${escH(s.decision)}:</b> ${escH(s.decision_reason)}</div>` : ""}<div class="hdetail" hidden></div></div>`;
     }).join("") || '<div class="muted">Nothing stored yet.</div>';
     if (openHist) {
       const row = [...$hList.querySelectorAll(".hrow")].find(r => r.dataset.id === openHist.id);
@@ -949,6 +985,85 @@ $hList.addEventListener("click", async (e) => {
   } catch { d.textContent = "Could not load."; }
 });
 setInterval(() => { if (!document.getElementById("tab-history").hidden) loadHistory(); }, 20000);
+
+// ---- decisions: every candidate the engine looked at, taken or dropped, and why ----
+const $dList = document.getElementById("d-list");
+const D_CLS = { "taken": "target", "let go": "missed", "dropped": "stopped" };
+async function loadDecisions() {
+  const q = new URLSearchParams({ days: document.getElementById("d-days").value, decision: document.getElementById("d-decision").value,
+                                  tier: document.getElementById("d-tier").value, direction: document.getElementById("d-dir").value });
+  const day = document.getElementById("d-day").value; if (day) q.set("day", day);
+  $dList.innerHTML = '<div class="muted" style="padding:8px 12px">Loading…</div>';
+  try {
+    const r = await fetch("/api/decisions?" + q).then(x => x.json());
+    if (!day && r.day) document.getElementById("d-day").value = r.day;
+    const c = r.counts || {};
+    document.getElementById("d-count").textContent = `${c.taken || 0} taken · ${c["let go"] || 0} let go · ${c.dropped || 0} dropped`;
+    $dList.innerHTML = r.rows.map(d => `<div class="hrow drow" data-t="${d.time}" data-tf="${d.trigger_tf}" data-id="${d.id || ""}"><div class="top">
+        <span class="pill ${d.direction === "bull" ? "buy" : "sell"}">${d.direction === "bull" ? "BUY" : "SELL"}</span>
+        <div class="h-main"><b>${escH(d.label)}</b><span>${fmtT(d.time)}${d.level != null ? " · level " + d.level : ""}</span></div>
+        <span class="res ${D_CLS[d.decision]}">${d.decision}</span></div>
+        <div class="dwhy">${d.what ? `<span class="muted">${escH(d.what)}</span><br>` : ""}${escH(d.reason)}${d.id && d.decision !== "dropped" ? ` <button class="d-ask" data-id="${d.id}">explain</button>` : ""}</div></div>`).join("")
+      || '<div class="muted" style="padding:8px 12px">Nothing in this period.</div>';
+  } catch { $dList.innerHTML = '<div class="muted" style="padding:8px 12px">Could not load the decisions.</div>'; }
+}
+["d-day", "d-days", "d-decision", "d-tier", "d-dir"].forEach(id => document.getElementById(id).addEventListener("change", loadDecisions));
+$dList.addEventListener("click", (e) => {
+  const a = e.target.closest(".d-ask"); if (a) { askAbout(a.dataset.id); return; }
+  const row = e.target.closest(".drow"); if (!row) return;
+  showView({ timeframe: row.dataset.tf, focus_time: +row.dataset.t, bars: 80 });     // put the chart on that candle
+});
+
+// ---- deep-dive: one rule at a time, every trade explained by the engine ----
+const $sBody = document.getElementById("s-body");
+let studyData = null, studyVer = "b";
+try { studyVer = localStorage.getItem("study-ver") || "b"; } catch {}
+async function loadStudy() {
+  $sBody.innerHTML = '<div class="muted" style="padding:8px 12px">Working it out…</div>';
+  try { studyData = await fetch("/api/study?rule=" + document.getElementById("s-rule").value).then(x => x.json()); renderStudy(); }
+  catch { $sBody.innerHTML = '<div class="muted" style="padding:8px 12px">Could not load the study.</div>'; }
+}
+function renderStudy() {
+  const r = studyData; if (!r) return;
+  const net = (v) => `<td class="${v > 0 ? "pos" : v < 0 ? "neg" : ""}">${rfmt(v, 2)}</td>`;
+  const pctTd = (y) => `<td>${y.win_rate == null ? "–" : Math.round(y.win_rate * 100) + "%"}</td>`;
+  const yr = (y) => `<tr><td>${y.year}</td><td>${y.trades}</td><td class="pos">${y.won}</td><td class="neg">${y.lost}</td><td>${y.exited}</td>${pctTd(y)}${net(y.net_r)}<td>${y.let_go}</td></tr>`;
+  const head = `<tr><th>Year</th><th>Trades</th><th>Won</th><th>Lost</th><th>Exits</th><th>Win rate</th><th>Net</th><th>Let go</th></tr>`;
+  const RES = { "won": "target", "lost": "stopped", "let go": "missed", "open": "live", "dropped": "missed" };
+  const trade = (t) => `<div class="hrow strow" data-t="${t.time}"><div class="top">
+      <span class="pill ${t.direction === "BUY" ? "buy" : "sell"}">${t.direction}</span>
+      <div class="h-main"><b>${t.date}</b><span>entry ${t.entry} · stop ${t.stop} · target ${t.target} · R:R ${t.rr}${t.end ? " · ended " + t.end : ""}</span></div>
+      <span class="res ${RES[t.result]}">${t.result}${t.result_r != null ? " " + rfmt(t.result_r, 2) : ""}</span></div>
+      <ol class="sexp">${t.explain.map(l => `<li>${escH(l)}</li>`).join("")}</ol>
+      <div class="dwhy"><button class="s-ask" data-id="${t.id}">explain on the chart</button> <span class="muted">${escH(t.id)}</span></div></div>`;
+  const cmp = `<table><tr><th>Version</th><th>Trades</th><th>Won</th><th>Lost</th><th>Exits</th><th>Win rate</th><th>Net</th></tr>${r.versions.map(v =>
+      `<tr class="${v.key === studyVer ? "sel" : ""}"><td>${escH(v.title)}</td><td>${v.total.trades}</td><td class="pos">${v.total.won}</td><td class="neg">${v.total.lost}</td><td>${v.total.exited}</td>${pctTd(v.total)}${net(v.total.net_r)}</tr>`).join("")}</table>`;
+  // ONE list, in the order the trades appeared. A trade that is the same in B, C and D is shown once, with those versions on it.
+  const GROUP_NAME = { signal1: "Signal 1 · Daily CPLOC on the Monthly level", cploc: "Signal 2 · Daily CPLOC on a Weekly level", close: "Signal 2 · Daily close beyond a Weekly level", other: "The other way, from the Daily FVG rejection that cut a Monthly trade short", follow: "Follow the trend: the Monthly level was busted" };
+  const byKey = new Map();
+  for (const v of r.versions) for (const g of v.groups) for (const t of g.trades) {
+    const key = t.group === "other" ? t.id : (v.key === "a" ? "a|" : "bcd|") + t.id.replace(/^study-monthly-[abcd]-/, "");
+    const row = byKey.get(key) || { ...t, versions: [] };
+    row.versions.push(v.key.toUpperCase()); byKey.set(key, row);
+  }
+  const list = [...byKey.values()].sort((x, y) => x.time - y.time || (x.versions[0] > y.versions[0] ? 1 : -1));
+  const one = (t) => trade(t).replace('<div class="h-main">', `<span class="vtag">${t.versions.join(" · ")}</span><div class="h-main">`)
+                             .replace("<b>" + t.date + "</b>", `<b>${t.date}</b><span class="muted">${escH(GROUP_NAME[t.group] || "")}</span>`);
+  $sBody.innerHTML = `<div class="study">
+    <h3>${escH(r.title)}</h3><div class="perf-small"><b>Your rule:</b> ${escH(r.rule)}</div>
+    <details><summary>How the engine applies it, and the four versions</summary><ol>${r.how_the_engine_applies_it.map(l => `<li>${escH(l)}</li>`).join("")}</ol></details>
+    <div class="muted">Trades since ${r.since}. Results before costs. An exit on a Daily FVG rejection counts as won when it closed in profit, lost when at a loss.</div>
+    <h4>All versions</h4>${cmp}
+    <h4>Every trade, in the order it appeared · ${list.length}</h4>
+    <div class="muted">The tag on each trade says which versions take it: A = today's engine; B · C · D = the same trade in all three; C or D alone = the trade the other way, taken from the Daily FVG rejection that cut a Monthly trade short.</div>
+    <div class="slist">${list.map(one).join("")}</div>
+  </div>`;
+}
+document.getElementById("s-rule").addEventListener("change", loadStudy);
+$sBody.addEventListener("click", (e) => {
+  const a = e.target.closest(".s-ask"); if (a) { askAbout(a.dataset.id); return; }
+  const row = e.target.closest(".strow"); if (row && !e.target.closest("summary")) showView({ timeframe: "1d", focus_time: +row.dataset.t, bars: 80 });
+});
 
 // ---- notes: what the assistant has been taught and what it has noticed ----
 const $nList = document.getElementById("n-list");

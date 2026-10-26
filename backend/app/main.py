@@ -15,7 +15,8 @@ from starlette.concurrency import run_in_threadpool  # noqa: E402
 import asyncio  # noqa: E402
 import time  # noqa: E402
 import datetime as dt  # noqa: E402
-import json  # noqa: E402
+import json
+import re  # noqa: E402
 import logging  # noqa: E402
 
 from . import assistant, data, frc_levels, levels, llm, mt5, recommendation, reversals, store  # noqa: E402
@@ -102,6 +103,35 @@ _TOOL_NAMES = ("annotate_chart", "focus_setup", "show_chart", "clear_annotations
                "get_levels", "get_setup", "find_setups", "check_level", "save_note")
 
 
+_META = re.compile(r"^\s*(we (should|need|must|can|have|will)|we're|the user|user (says|said|wants|asks)|according to|let'?s (produce|answer|respond|craft|write)|"
+                   r"i (should|need to|must|will) (respond|answer|produce|say|mention)|so (respond|answer)|they said|use tools|ok,? let'?s|the snapshot|need to (comply|respond))", re.I)
+
+
+def _strip_leak(text: str, st: dict, final: bool = False) -> str:
+    """Some local models write their own planning into the reply before the answer ("We should produce a response... Sure.I'll jump to..."). When a reply
+    STARTS like that, hold it back until the point where the planning runs into the answer (a sentence end glued to the next capital letter, or a blank
+    line after a planning paragraph) and drop everything before it. Replies that start normally pass straight through."""
+    if st.get("done"):
+        return text
+    buf = st.get("buf", "") + text
+    if len(buf) < 40 and not final:
+        st["buf"] = buf
+        return ""
+    if not _META.match(buf):
+        st["done"] = True
+        return buf
+    m = re.search(r"[.!?:](?=[A-Z])", buf)                     # "...accordingly.Trigger step" / "Sure.I'll jump"
+    if m:
+        st["done"] = True
+        return buf[m.end():]
+    if final or len(buf) > 6000:
+        st["done"] = True
+        paras = [p for p in re.split(r"\n\s*\n", buf) if p.strip() and not _META.match(p)]
+        return "\n\n".join(paras)
+    st["buf"] = buf
+    return ""
+
+
 def _strip_calls(text: str, st: dict, final: bool = False) -> str:
     """Remove tool calls the model typed into its reply as text, e.g. *annotate_chart({"type": "zone", ...})*: from the tool name through the matching closing
     bracket, and the asterisks or backticks around it. `st` carries the state between streamed chunks (the call may arrive in pieces)."""
@@ -113,6 +143,14 @@ def _strip_calls(text: str, st: dict, final: bool = False) -> str:
         text = stripped
     out, i, n = [], 0, len(text)
     while i < n:
+        if st.get("skipline"):                                      # "*annotate_chart: 1768.97*": the rest of that line is the call
+            j = text.find("\n", i)
+            if j == -1:
+                i = n
+                break
+            st["skipline"] = False
+            i = j
+            continue
         if st.get("depth", 0) > 0:                                  # inside a call: skip to the matching ")"
             ch = text[i]
             st["depth"] += (ch == "(") - (ch == ")")
@@ -157,6 +195,12 @@ def _strip_calls(text: str, st: dict, final: bool = False) -> str:
                 out.append(kept)
                 st["buf"] = pre[len(kept):] + text[j:]                # keep the wrapping "*", "`" or "[" with the name: they belong to the call
             break
+        if text[k] == ":" and not linked:                           # "*annotate_chart: ...*" typed as a line
+            before = text[i:j]
+            out.append(before.rstrip("*`_ ") if before.strip("*`_ ") == "" else before.rstrip("*`"))
+            st["skipline"] = True
+            i = k + 1
+            continue
         if text[k] != "(":                                          # the name used as plain words: leave it
             out.append(text[i:j + len(name)])
             i = j + len(name)
@@ -309,6 +353,40 @@ def _with_expected_shifts(rec: dict, setups: list[dict], price: float) -> dict:
             except Exception:
                 t["next_target"] = None
     return _with_phase(rec)
+
+
+@app.get("/api/decisions")
+async def get_decisions(day: str | None = None, days: int = 1, decision: str = "all", tier: str = "all", direction: str = "all", limit: int = 1000):
+    """Every candidate the engine looked at, TAKEN or DROPPED, with the reason (see reversals.decisions). `day` is YYYY-MM-DD on the feed clock (default: the
+    latest day with a decision); `days` days from it. decision: all | taken | dropped | let go. tier: all | daily | weekly | monthly | fvg."""
+    import datetime as _dt
+    rows = await run_in_threadpool(reversals.decisions)
+    if not rows:
+        return {"day": None, "rows": [], "counts": {}}
+    if day:
+        try:
+            start = int(_dt.datetime.strptime(day, "%Y-%m-%d").replace(tzinfo=_dt.UTC).timestamp())
+        except ValueError:
+            raise HTTPException(400, "day must be YYYY-MM-DD")
+    else:
+        start = rows[-1]["time"] - rows[-1]["time"] % 86400
+    end = start + max(1, min(days, 31)) * 86400
+    sel = [r for r in rows if start <= r["time"] < end and (tier == "all" or r["tier"] == tier) and (direction == "all" or r["direction"] == direction)]
+    counts = {k: sum(1 for r in sel if r["decision"] == k) for k in ("taken", "let go", "dropped")}
+    if decision != "all":
+        sel = [r for r in sel if r["decision"] == decision]
+    for r in sel:
+        r["label"] = recommendation.SHORT_LABEL.get((r["tier"], r["kind"]), f"{r['tier']} {r['kind']}")
+    return {"day": _dt.datetime.fromtimestamp(start, _dt.UTC).strftime("%Y-%m-%d"), "days": days, "counts": counts, "rows": sel[:max(1, min(limit, 5000))]}
+
+
+@app.get("/api/study")
+async def get_study(rule: str = "monthly"):
+    """A deep-dive of one rule (see study.py): how the engine applies it, its results by year, and every trade with the engine's own explanation."""
+    from . import study
+    if rule not in study.STUDIES:
+        raise HTTPException(400, f"rule must be one of {list(study.STUDIES)}")
+    return await run_in_threadpool(study.STUDIES[rule])
 
 
 @app.get("/api/recommendation")
@@ -467,6 +545,7 @@ async def chat(req: ChatRequest):
     await run_in_threadpool(store.add_message, req.session, "user", req.messages[-1].content)
 
     pre_events: list[dict] = []
+    direct: str | None = None            # a step of a Deep-dive setup: the app says the engine's own explanation, word for word (no model in between)
     focus = _FOCUS.get(req.session)
     try:
         import re as _re0
@@ -485,6 +564,16 @@ async def chat(req: ChatRequest):
                 r"\b(continue|next|go on|proceed|lets? go|switch|yes|yeah|yep|ok|okay|sure|go ahead|show)\b", text) else focus["step"]
             move = nxt != focus["step"]
             focus["step"] = nxt
+        # "go to the monthly chart": the APP moves the chart (the model has no tools while a setup is being explained)
+        tf_ask = None
+        if focus and not req.focus_setup:                         # a step button / "why?" press is not a timeframe request
+            said = _re0.sub(r"\b(daily|weekly|monthly|fvg|manual)-[\w-]+", " ", text)      # setup ids ("monthly-level-hold-1d-...") are not the user asking for a chart
+            m_tf = _re0.search(r"\b(monthly|month|weekly|week|daily|day|4\s?h(?:our)?|1\s?h(?:our)?|15\s?m(?:in)?)\b", said)
+            if m_tf and _re0.search(r"\b(go|switch|show|move|open|take|put|chart|tf|timeframe|view)\b", said):
+                w = m_tf.group(1).replace(" ", "")
+                tf_ask = {"monthly": "1mo", "month": "1mo", "weekly": "1w", "week": "1w", "daily": "1d", "day": "1d"}.get(w) or (
+                    "4h" if w.startswith("4h") else "1h" if w.startswith("1h") else "15m")
+                move = False
         if focus:
             fe = await run_in_threadpool(assistant.focus_events, focus["setup"], focus["step"], req.session)
             if fe.get("error"):                  # the setup is not in the history any more (the rules changed and the history was rebuilt)
@@ -500,9 +589,27 @@ async def chat(req: ChatRequest):
             # it cannot mix another trade's numbers into the explanation.
             for k in ("reversal_setups_latest", "recommendation", "nearby_close_levels", "recent_candles_ohlc"):
                 snapshot.pop(k, None)
+            moved = None
+            if tf_ask:
+                v = await run_in_threadpool(assistant.focus_view, focus["setup"], tf_ask)
+                if v:
+                    pre_events = [{"view": v["view"]}] + ([{"annotate": v["draw"]}] if v.get("draw") else [])
+                    if v.get("draw"):
+                        await run_in_threadpool(store.add_annotations, req.session, v["draw"])
+                    moved = {"done": f"The app has ALREADY moved the chart to the {assistant.TF_NAME_.get(tf_ask, tf_ask)} chart, as the user asked.",
+                             "facts_about_it": v["facts"],
+                             "say": "Say facts_about_it.in_plain_words (you may shorten it, never change a number, a timeframe or what crossed what), then ask what they see. Do not tell the user to switch "
+                                    "it themselves, do not say you will move it, never describe a tool, and use only these numbers."}
             snapshot["chart_focus"] = {"setup": focus["setup"], "step_on_the_chart": focus["step"], "shown": fe.get("shown"),
                                        "facts_use_only_these_numbers": fe.get("facts_for_this_step__use_only_these_numbers"),
                                        "rule": "This is the ONLY setup under discussion. Every number you say must come from these facts. Any other trade is not part of this conversation."}
+            say = (fe.get("facts_for_this_step__use_only_these_numbers") or {}).get("engine_explanation__say_this")
+            if move and say and not tf_ask:
+                direct = "\n\n".join(say) + "\n\nDo you see the same on your chart?"
+            if moved:
+                snapshot["chart_focus"] = {"setup": focus["setup"], "the_app_moved_the_chart": moved,
+                                           "engine_decision": (fe.get("facts_for_this_step__use_only_these_numbers") or {}).get("engine_decision"),
+                                           "rule": "This is the ONLY setup under discussion. Every number you say must come from these facts."}
     except _NoFocus:
         pre_events = []
     except Exception:
@@ -514,6 +621,7 @@ async def chat(req: ChatRequest):
         pending: list[dict] = []        # drawings waiting for the narration to reach them
         markup = {"hold": "", "in": False}
         calls = {"buf": "", "depth": 0}
+        leak: dict = {}
         scan = ""                       # what has been said since they were staged
 
         def stage(items: list[dict]) -> None:
@@ -545,13 +653,16 @@ async def chat(req: ChatRequest):
         for e_ in pre_events:
             for piece in handle(e_):
                 yield piece
+        async def spoken():
+            for part in _re.split(r"(?<=\n\n)", direct):
+                yield part
         try:
-            async for chunk in llm.stream_reply(history, req.timeframe, snapshot, req.session):
+            async for chunk in (spoken() if direct else llm.stream_reply(history, req.timeframe, snapshot, req.session)):
                 if isinstance(chunk, dict):          # a chart move / drawing: sent between control characters, never saved as chat text
                     for piece in handle(chunk):
                         yield piece
                     continue
-                chunk = _strip_calls(_strip_markup(chunk, markup), calls)
+                chunk = _strip_leak(_strip_calls(_strip_markup(chunk, markup), calls), leak)
                 if not chunk:
                     continue
                 parts.append(chunk)
@@ -560,7 +671,7 @@ async def chat(req: ChatRequest):
                     scan += chunk
                     for piece in reveal():
                         yield piece
-            tail = _strip_calls("", calls, final=True)       # characters held back at the very end in case a call followed
+            tail = _strip_leak(_strip_calls("", calls, final=True), leak, final=True)       # characters held back at the very end
             if tail:
                 parts.append(tail)
                 yield tail
@@ -732,6 +843,14 @@ async def chat_history(session: str = "default"):
 async def history(state: str = "all", kind: str | None = None, tier: str | None = None, direction: str | None = None,
                   outcome: str | None = None, limit: int = 100, offset: int = 0):
     rows = await run_in_threadpool(store.list_setups, state, kind, tier, direction, outcome, min(limit, 500), offset)
+    try:            # the engine's own reason (decision log), shown on every row
+        why = {d["id"]: d for d in await run_in_threadpool(reversals.decisions) if d.get("id")}
+        for r in rows:
+            d = why.get(r["id"])
+            if d:
+                r["decision"], r["decision_reason"] = d["decision"], (f"{d['what'].rstrip('.')}. " if d.get("what") else "") + d["reason"]
+    except Exception:
+        pass
     return {"counts": store.count_setups(), "setups": rows}
 
 
@@ -762,7 +881,7 @@ async def history_performance(scope: str = "engine", days: int = 0, live_only: b
 
 @app.get("/api/history/{setup_id}")
 async def history_one(setup_id: str):
-    rec = await run_in_threadpool(store.get_setup, setup_id)
+    rec = await run_in_threadpool(assistant.get_setup_any, setup_id)
     if not rec:
         raise HTTPException(404, "unknown setup")
     return rec

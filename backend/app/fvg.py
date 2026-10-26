@@ -12,13 +12,28 @@ Consumed: after creation, a candle that touches the zone marks it "tapped"; once
 An FVG is a CONTINUATION zone: a bearish FVG means the trend is down and a rally into it is expected to be rejected; a bullish FVG
 the opposite.
 """
+import os
 from bisect import bisect_left, bisect_right
 
 from . import data, patterns
 
+# Gap rules, switchable for tests (test_wickfix.py). ON by default: (1) and (3). Set FVG_FIX_WICK=0 / FVG_FIX_WICKOUT=0 to get the old behaviour.
+#  (1) FVG_FIX_WICK: a wick that runs through the WHOLE gap and closes back outside gives the whole original gap back.
+#  (3) FVG_FIX_WICKOUT: a candle of the trend's colour that WICKED OUTSIDE the gap on the far side (above a bearish gap, below a bullish one) and closed back inside is
+#      itself a rejection, even though it did not close beyond the gap.
+#  (2) FVG_FIX_CLOSEIN (OFF, tested worse): a close back inside the gap after the tap no longer cancels the setup.
+WICK_FIX = os.getenv("FVG_FIX_WICK", "1") == "1"
+WICKOUT_FIX = os.getenv("FVG_FIX_WICKOUT", "1") == "1"
+CLOSE_IN_FIX = os.getenv("FVG_FIX_CLOSEIN", "0") == "1"
 TFS = ("1h", "4h", "1d")
 SEC = {"1h": 3600, "4h": 14400, "1d": 86400}
+NAME = {"1h": "1H", "4h": "4H", "1d": "Daily"}
 _CACHE: dict = {}
+
+
+def _ft(t: int) -> str:
+    import datetime as _dt
+    return _dt.datetime.fromtimestamp(t, _dt.UTC).strftime("%a %d %b %Y %H:%M")
 
 
 def zones(tf: str) -> list[dict]:
@@ -46,7 +61,12 @@ def zones(tf: str) -> list[dict]:
         cur = z["top"] if z["bull"] else z["bottom"]          # the edge of the part of the gap price has NOT traded through yet
         for j in range(k + 1, n):
             x = candles[j]
-            if not z["bull"] and x["high"] > cur:                # price went into the gap: that part is gone, what is left starts above the highest point reached
+            used = (z["bull"] and x["close"] <= z["bottom"]) or (not z["bull"] and x["close"] >= z["top"])
+            through = (not z["bull"] and x["high"] >= z["top"]) or (z["bull"] and x["low"] <= z["bottom"])
+            if WICK_FIX and through and not used:                # a wick through the whole gap that closed back: the whole gap is valid again
+                cur = z["bottom"] if not z["bull"] else z["top"]
+                z["viol"].append((x["time"] + SEC[tf], cur))
+            elif not z["bull"] and x["high"] > cur:              # price went into the gap: that part is gone, what is left starts above the highest point reached
                 cur = min(x["high"], z["top"])
                 z["viol"].append((x["time"] + SEC[tf], cur))
             elif z["bull"] and x["low"] < cur:
@@ -144,9 +164,10 @@ def find_rejection(z: dict, candles: list[dict], k: int, last: int) -> int | Non
             return None                                           # closed through the gap
         coloured = (x["close"] > x["open"]) if bull else (x["close"] < x["open"])
         beyond = (x["close"] > zt) if bull else (x["close"] < zb)
-        if coloured and beyond:
+        wickout = WICKOUT_FIX and ((x["low"] <= z["bottom"] and x["close"] > z["bottom"]) if bull else (x["high"] >= z["top"] and x["close"] < z["top"]))
+        if coloured and (beyond or wickout):
             return j
-        if j > k and ((x["close"] <= zt) if bull else (x["close"] >= zb)):
+        if not CLOSE_IN_FIX and j > k and ((x["close"] <= zt) if bull else (x["close"] >= zb)):
             return None                                           # back into the unfilled part: no continuation
     return None
 
@@ -174,6 +195,19 @@ def trend_start(z: dict, tap_time: int) -> int | None:
     return ev[i]["time"]
 
 
+def _setup_ok(z: dict, d: list[dict], d_times: list[int], tap: int, price: float) -> bool:
+    """Would a rejection of FVG `z` by the candle at index `tap` be a real FVG setup? Same test as the setups themselves: the trend of the gap's timeframe
+    is the gap's way (trend_start) and the peak the pullback came from is beyond `price`."""
+    b = trend_start(z, d[tap]["time"])
+    if b is None:
+        return False
+    seg = d[bisect_left(d_times, b):tap]
+    if not seg:
+        return False
+    ext = max(x["high"] for x in seg) if z["bull"] else min(x["low"] for x in seg)
+    return ext > price if z["bull"] else ext < price
+
+
 def _tap_pending(z: dict, d: list[dict], p: int, ci: int) -> bool:
     """True when candle p did NOT tap what is left of FVG `z`, or the candles p..ci-1 already settled it (a trigger, a close through, a close back in);
     False when p tapped it and everything since is still waiting for a trigger (the candle at ci can still be it)."""
@@ -189,7 +223,7 @@ def _tap_pending(z: dict, d: list[dict], p: int, ci: int) -> bool:
             return True
         if ((x["close"] > x["open"]) if bull else (x["close"] < x["open"])) and ((x["close"] > zt) if bull else (x["close"] < zb)):
             return True
-        if j > p and ((x["close"] <= zt) if bull else (x["close"] >= zb)):
+        if not CLOSE_IN_FIX and j > p and ((x["close"] <= zt) if bull else (x["close"] >= zb)):
             return True
     return False
 
@@ -287,17 +321,19 @@ def _h1_times(h1: list[dict]) -> list[int]:
     return _H1T["times"]
 
 
-def opposing_signal(t: int, bull: bool, price: float, above_sec: int) -> bool:
+def opposing_reason(t: int, bull: bool, price: float, above_sec: int) -> str | None:
     """Is an FVG signal on a HIGHER timeframe (longer than `above_sec` seconds) against a trade in this direction in play at time t?
     alive:   an FVG leg of that timeframe the other way that has not reached its target or been stopped (see alive_leg).
     forming: the running 4H / Daily candle (judged from the 1H candles up to `t`, nothing later) has tapped into an unfilled FVG of its own timeframe, the
              other way, price is now outside it on the trend side, and the candle so far has the trend's colour. It has not closed yet, so the leg is not
-             'alive' in the strict sense, but the signal is printing."""
+             'alive' in the strict sense, but the signal is printing. Only when it would be a real FVG setup (_setup_ok: trend and target)."""
     for tf in TFS:
         if SEC[tf] <= above_sec:
             continue
-        if alive_leg(t, not bull, price, tf):
-            return True
+        leg = alive_leg(t, not bull, price, tf)
+        if leg:
+            return (f"a {NAME[tf]} {'bullish' if leg['bull'] else 'bearish'} FVG setup is in play the other way (gap {leg['zone']['bottom']}-{leg['zone']['top']}, "
+                    f"triggered {_ft(leg['trigger_time'])}, heading for {leg['target']}, stop {leg['stop']})")
         if tf == "1h":
             continue
         d = data.try_candles(tf)
@@ -312,15 +348,15 @@ def opposing_signal(t: int, bull: bool, price: float, above_sec: int) -> bool:
         if not part:
             continue
         opened, hi, lo, now = part[0]["open"], max(x["high"] for x in part), min(x["low"] for x in part), part[-1]["close"]
+        d_times = [c["time"] for c in d]
+        ci = bisect_left(d_times, cur["time"])
         for z in zones(tf):
             if z["bull"] == bull or z["created"] > cur["time"] or (z["end"] is not None and z["end"] <= cur["time"]):
                 continue
             zb, zt = bounds_at(z, cur["time"])
-            if not z["bull"] and hi >= zb and now < zb and now < opened:
-                return True
-            if z["bull"] and lo <= zt and now > zt and now > opened:
-                return True
-        ci = bisect_left([c["time"] for c in d], cur["time"])
+            if ((not z["bull"] and hi >= zb and now < zb and now < opened) or (z["bull"] and lo <= zt and now > zt and now > opened)) and _setup_ok(z, d, d_times, ci, now):
+                return (f"a {NAME[tf]} {'bullish' if z['bull'] else 'bearish'} FVG setup the other way is forming: the running {NAME[tf]} candle ({_ft(cur['time'])}) "
+                        f"tapped the gap {zb}-{zt} and is printing the rejection")
         for z in zones(tf):                                  # tapped on one of the 3 candles BEFORE the running one, no trigger yet: the running candle may be it
             if z["bull"] == bull:
                 continue
@@ -328,6 +364,11 @@ def opposing_signal(t: int, bull: bool, price: float, above_sec: int) -> bool:
                 if z["created"] > d[p]["time"] or _tap_pending(z, d, p, ci):
                     continue
                 zb, zt = bounds_at(z, d[p]["time"])
-                if (not z["bull"] and now < zb and now < opened) or (z["bull"] and now > zt and now > opened):
-                    return True
-    return False
+                if ((not z["bull"] and now < zb and now < opened) or (z["bull"] and now > zt and now > opened)) and _setup_ok(z, d, d_times, p, now):
+                    return (f"a {NAME[tf]} {'bullish' if z['bull'] else 'bearish'} FVG setup the other way is forming: the {NAME[tf]} candle of {_ft(d[p]['time'])} "
+                            f"tapped the gap {zb}-{zt} and the running {NAME[tf]} candle ({_ft(cur['time'])}) is printing the rejection")
+    return None
+
+
+def opposing_signal(t: int, bull: bool, price: float, above_sec: int) -> bool:
+    return opposing_reason(t, bull, price, above_sec) is not None
